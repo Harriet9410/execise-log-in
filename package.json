@@ -1,0 +1,15 @@
+{
+  "name": "exercise",
+  "version": "1.0.0",
+  "description": "刷题练习网站 - 支持用户登录和个人题库",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.21.0",
+    "jsonwebtoken": "^9.0.2"
+  }
+}

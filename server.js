@@ -17,10 +17,16 @@ function auth(req, res, next) {
     const payload = jwt.verify(header.slice(7), JWT_SECRET);
     req.userId = payload.id;
     req.username = payload.username;
+    req.role = payload.role || 'user';
     next();
   } catch {
     res.status(401).json({ error: '登录已过期，请重新登录' });
   }
+}
+
+function adminOnly(req, res, next) {
+  if (req.role !== 'admin') return res.status(403).json({ error: '需要管理员权限' });
+  next();
 }
 
 app.post('/api/register', (req, res) => {
@@ -30,8 +36,8 @@ app.post('/api/register', (req, res) => {
   if (password.length < 4) return res.status(400).json({ error: '密码至少4个字符' });
   const user = db.createUser(username, password);
   if (!user) return res.status(400).json({ error: '用户名已存在' });
-  const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
-  res.json({ token, user: { id: user.id, username: user.username } });
+  const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+  res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
 });
 
 app.post('/api/login', (req, res) => {
@@ -39,14 +45,60 @@ app.post('/api/login', (req, res) => {
   if (!username || !password) return res.status(400).json({ error: '用户名和密码不能为空' });
   const user = db.verifyUser(username, password);
   if (!user) return res.status(400).json({ error: '用户名或密码错误' });
-  const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
-  res.json({ token, user: { id: user.id, username: user.username } });
+  const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+  res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
 });
 
 app.get('/api/me', auth, (req, res) => {
   const user = db.getUserById(req.userId);
   if (!user) return res.status(404).json({ error: '用户不存在' });
-  res.json({ id: user.id, username: user.username, created_at: user.created_at });
+  res.json({ id: user.id, username: user.username, created_at: user.created_at, role: user.role });
+});
+
+app.get('/api/users', auth, (req, res) => {
+  if (req.role !== 'admin') return res.status(403).json({ error: '需要管理员权限' });
+  res.json(db.getAllUsers());
+});
+
+app.delete('/api/users/:id', auth, adminOnly, (req, res) => {
+  const id = parseInt(req.params.id);
+  if (id === req.userId) return res.status(400).json({ error: '不能删除自己' });
+  db.deleteUser(id);
+  res.json({ ok: true });
+});
+
+app.put('/api/users/:id/reset-password', auth, adminOnly, (req, res) => {
+  const id = parseInt(req.params.id);
+  const { password } = req.body;
+  if (!password || password.length < 4) return res.status(400).json({ error: '密码至少4个字符' });
+  const ok = db.resetUserPassword(id, password);
+  if (!ok) return res.status(404).json({ error: '用户不存在' });
+  res.json({ ok: true });
+});
+
+app.post('/api/users/:id/reset-progress', auth, adminOnly, (req, res) => {
+  const id = parseInt(req.params.id);
+  db.resetProgress(id);
+  res.json({ ok: true });
+});
+
+app.get('/api/users/:id/questions', auth, adminOnly, (req, res) => {
+  const id = parseInt(req.params.id);
+  res.json(db.getQuestions(id));
+});
+
+app.delete('/api/users/:id/questions', auth, adminOnly, (req, res) => {
+  const id = parseInt(req.params.id);
+  const { qids } = req.body;
+  if (!Array.isArray(qids)) return res.status(400).json({ error: '请发送题目ID数组' });
+  db.deleteQuestions(id, qids);
+  res.json({ count: qids.length });
+});
+
+app.put('/api/users/:userId/questions/:qid', auth, adminOnly, (req, res) => {
+  const userId = parseInt(req.params.userId);
+  db.updateQuestion(userId, req.params.qid, req.body);
+  res.json({ ok: true });
 });
 
 app.get('/api/questions', auth, (req, res) => {

@@ -6,6 +6,7 @@
 
   var userStr = localStorage.getItem('exercise-user');
   var currentUser = userStr ? JSON.parse(userStr) : null;
+  var isAdminUser = currentUser && currentUser.role === 'admin';
 
   var state = {
     questions: [],
@@ -1092,6 +1093,215 @@
 
   // ==================== MANUAL ADD ====================
 
+  function openUsersPanel() {
+    var existing = document.getElementById('usersPanel');
+    if (existing) { existing.remove(); return; }
+
+    if (!isAdminUser) { showToast('需要管理员权限', 'error'); return; }
+
+    api('GET', '/users').then(function(users) {
+      var div = document.createElement('div');
+      div.id = 'usersPanel';
+      div.className = 'import-section';
+      div.style.maxWidth = '800px';
+      div.style.width = '100%';
+      div.style.marginTop = '12px';
+
+      var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
+      html += '<h3 style="margin:0;font-size:16px">👑 管理员面板</h3>';
+      html += '<button class="btn" id="closeUsersBtn">关闭</button>';
+      html += '</div>';
+      html += '<div style="font-size:13px;color:var(--text2);margin-bottom:10px">共 ' + users.length + ' 位注册用户</div>';
+
+      html += '<table style="width:100%;border-collapse:collapse;font-size:14px">';
+      html += '<thead><tr style="border-bottom:2px solid var(--border)">';
+      html += '<th style="text-align:left;padding:8px">用户名</th>';
+      html += '<th style="text-align:center;padding:8px">身份</th>';
+      html += '<th style="text-align:center;padding:8px">题目数</th>';
+      html += '<th style="text-align:center;padding:8px">已掌握</th>';
+      html += '<th style="text-align:center;padding:8px">错题</th>';
+      html += '<th style="text-align:left;padding:8px">注册时间</th>';
+      html += '<th style="text-align:center;padding:8px">操作</th>';
+      html += '</tr></thead><tbody>';
+
+      for (var i = 0; i < users.length; i++) {
+        var u = users[i];
+        var isMe = (u.id === currentUser.id);
+        html += '<tr style="border-bottom:1px solid var(--border)' + (isMe ? ';background:var(--accent-light)' : '') + '">';
+        html += '<td style="padding:8px">' + escapeHtml(u.username) + (isMe ? ' <span style="color:var(--accent);font-size:11px">(当前)</span>' : '') + '</td>';
+        html += '<td style="text-align:center;padding:8px">' + (u.role === 'admin' ? '<span style="color:var(--accent);font-weight:600">管理员</span>' : '用户') + '</td>';
+        html += '<td style="text-align:center;padding:8px">' + u.questionCount + '</td>';
+        html += '<td style="text-align:center;padding:8px;color:var(--green)">' + u.knownCount + '</td>';
+        html += '<td style="text-align:center;padding:8px;color:var(--red)">' + u.wrongCount + '</td>';
+        html += '<td style="padding:8px;font-size:12px;color:var(--text2)">' + escapeHtml(u.created_at || '-') + '</td>';
+        html += '<td style="text-align:center;padding:8px;white-space:nowrap">';
+        if (u.questionCount > 0) {
+          html += '<button class="btn view-user-q-btn" data-uid="' + u.id + '" data-uname="' + escapeAttr(u.username) + '" style="padding:4px 8px;font-size:12px;margin-right:4px">📋题库</button>';
+        }
+        if (u.role !== 'admin') {
+          html += '<button class="btn reset-pwd-btn" data-uid="' + u.id + '" data-uname="' + escapeAttr(u.username) + '" style="padding:4px 8px;font-size:12px;margin-right:4px">🔑重置密码</button>';
+          html += '<button class="btn reset-prog-btn" data-uid="' + u.id + '" data-uname="' + escapeAttr(u.username) + '" style="padding:4px 8px;font-size:12px;margin-right:4px">🔄重置进度</button>';
+          html += '<button class="btn btn-danger del-user-btn" data-uid="' + u.id + '" data-uname="' + escapeAttr(u.username) + '" style="padding:4px 8px;font-size:12px">🗑️删除</button>';
+        }
+        html += '</td></tr>';
+      }
+
+      html += '</tbody></table>';
+      div.innerHTML = html;
+      document.querySelector('.content').appendChild(div);
+
+      document.getElementById('closeUsersBtn').onclick = function() { div.remove(); };
+
+      var viewBtns = div.querySelectorAll('.view-user-q-btn');
+      for (var i = 0; i < viewBtns.length; i++) {
+        viewBtns[i].onclick = function() {
+          var uid = parseInt(this.getAttribute('data-uid'));
+          var uname = this.getAttribute('data-uname');
+          openUserQuestions(uid, uname);
+        };
+      }
+
+      var resetPwdBtns = div.querySelectorAll('.reset-pwd-btn');
+      for (var i = 0; i < resetPwdBtns.length; i++) {
+        resetPwdBtns[i].onclick = function() {
+          var uid = parseInt(this.getAttribute('data-uid'));
+          var uname = this.getAttribute('data-uname');
+          var newPwd = prompt('为用户「' + uname + '」设置新密码（至少4位）：');
+          if (!newPwd || newPwd.length < 4) { if (newPwd !== null) alert('密码至少4个字符'); return; }
+          api('PUT', '/users/' + uid + '/reset-password', { password: newPwd }).then(function() {
+            showToast('已重置「' + uname + '」的密码', 'success');
+          });
+        };
+      }
+
+      var resetProgBtns = div.querySelectorAll('.reset-prog-btn');
+      for (var i = 0; i < resetProgBtns.length; i++) {
+        resetProgBtns[i].onclick = function() {
+          var uid = parseInt(this.getAttribute('data-uid'));
+          var uname = this.getAttribute('data-uname');
+          if (!confirm('确定重置用户「' + uname + '」的所有学习进度？')) return;
+          api('POST', '/users/' + uid + '/reset-progress').then(function() {
+            showToast('已重置「' + uname + '」的进度', 'success');
+          });
+        };
+      }
+
+      var delBtns = div.querySelectorAll('.del-user-btn');
+      for (var i = 0; i < delBtns.length; i++) {
+        delBtns[i].onclick = function() {
+          var uid = parseInt(this.getAttribute('data-uid'));
+          var uname = this.getAttribute('data-uname');
+          if (!confirm('确定删除用户「' + uname + '」及其所有数据？此操作不可撤销！')) return;
+          api('DELETE', '/users/' + uid).then(function() {
+            showToast('已删除用户「' + uname + '」', 'success');
+            div.remove();
+          });
+        };
+      }
+    });
+  }
+
+  function openUserQuestions(userId, username) {
+    var existing = document.getElementById('userQPanel');
+    if (existing) existing.remove();
+
+    api('GET', '/users/' + userId + '/questions').then(function(questions) {
+      var div = document.createElement('div');
+      div.id = 'userQPanel';
+      div.className = 'cat-editor';
+      div.style.marginTop = '12px';
+
+      var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
+      html += '<h4 style="margin:0">📋 用户「' + escapeHtml(username) + '」的题库（共 ' + questions.length + ' 题）</h4>';
+      html += '<button class="btn" id="closeUserQBtn">关闭</button>';
+      html += '</div>';
+
+      if (!questions.length) {
+        html += '<div style="text-align:center;padding:20px;color:var(--text2)">该用户暂无题目</div>';
+      } else {
+        html += '<div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap">';
+        html += '<label style="cursor:pointer;font-size:13px"><input type="checkbox" id="uqSelectAll"> 全选</label>';
+        html += '<button class="btn btn-danger" id="uqDeleteSelected" style="padding:4px 12px;font-size:12px">🗑️ 删除选中</button>';
+        html += '</div>';
+        html += '<div class="subj-batch-list" style="max-height:400px">';
+
+        var subjectGroups = {};
+        var subjectOrder = [];
+        for (var i = 0; i < questions.length; i++) {
+          var q = questions[i];
+          var subj = q.subject || '未分科目';
+          var cat = q.category || '未分类';
+          var key = subj + ' / ' + cat;
+          if (!subjectGroups[key]) { subjectGroups[key] = []; subjectOrder.push(key); }
+          subjectGroups[key].push(q);
+        }
+
+        for (var s = 0; s < subjectOrder.length; s++) {
+          var key = subjectOrder[s];
+          var items = subjectGroups[key];
+          html += '<div style="padding:6px 10px;font-weight:600;font-size:12px;color:var(--accent);background:var(--accent-light)">' + escapeHtml(key) + '（' + items.length + '题）</div>';
+          for (var j = 0; j < items.length; j++) {
+            var q = items[j];
+            html += '<label class="subj-batch-item" style="display:flex;align-items:flex-start;gap:6px;padding:6px 8px;font-size:13px;cursor:pointer;border-radius:4px">';
+            html += '<input type="checkbox" class="uq-check" data-qid="' + escapeAttr(q.id) + '" style="margin-top:3px">';
+            html += '<div style="flex:1">';
+            html += '<div style="font-weight:600">' + escapeHtml(q.question.substring(0, 80)) + '</div>';
+            html += '<div style="font-size:11px;color:var(--text2);margin-top:2px">';
+            html += '<span style="background:var(--accent-light);color:var(--accent);padding:1px 6px;border-radius:4px">' + (typeNames[q.type] || q.type) + '</span>';
+            if (q.difficulty) html += ' <span>难度' + q.difficulty + '</span>';
+            if (!hasAnswer(q)) html += ' <span style="color:var(--red)">⚠无答案</span>';
+            html += '</div></div>';
+            html += '<button class="btn uq-del-one" data-qid="' + escapeAttr(q.id) + '" style="padding:2px 8px;font-size:11px;flex-shrink:0">🗑️</button>';
+            html += '</label>';
+          }
+        }
+        html += '</div>';
+      }
+
+      div.innerHTML = html;
+      document.querySelector('.content').appendChild(div);
+
+      document.getElementById('closeUserQBtn').onclick = function() { div.remove(); };
+
+      if (questions.length) {
+        var checks = div.querySelectorAll('.uq-check');
+        document.getElementById('uqSelectAll').onchange = function() {
+          var checked = this.checked;
+          for (var i = 0; i < checks.length; i++) checks[i].checked = checked;
+        };
+
+        document.getElementById('uqDeleteSelected').onclick = function() {
+          var qids = [];
+          for (var i = 0; i < checks.length; i++) {
+            if (checks[i].checked) qids.push(checks[i].getAttribute('data-qid'));
+          }
+          if (!qids.length) { alert('请选择要删除的题目'); return; }
+          if (!confirm('确定删除 ' + qids.length + ' 道题？此操作不可撤销！')) return;
+          api('DELETE', '/users/' + userId + '/questions', qids).then(function() {
+            showToast('已删除 ' + qids.length + ' 道题', 'success');
+            div.remove();
+            openUsersPanel();
+          });
+        };
+
+        var delOneBtns = div.querySelectorAll('.uq-del-one');
+        for (var i = 0; i < delOneBtns.length; i++) {
+          delOneBtns[i].onclick = function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var qid = this.getAttribute('data-qid');
+            if (!confirm('确定删除此题？')) return;
+            api('DELETE', '/users/' + userId + '/questions', [qid]).then(function() {
+              showToast('已删除', 'success');
+              div.remove();
+              openUsersPanel();
+            });
+          };
+        }
+      }
+    });
+  }
+
   function setupAddForm() {
     var addToggle = document.getElementById('addToggle');
     var addBody = document.getElementById('addBody');
@@ -1178,7 +1388,11 @@
     document.getElementById('themeBtn').textContent = theme === 'dark' ? '☀️' : '🌙';
 
     if (currentUser) {
-      document.getElementById('userInfo').textContent = '👤 ' + currentUser.username;
+      document.getElementById('userInfo').textContent = (isAdminUser ? '👑 ' : '👤 ') + currentUser.username;
+    }
+    if (!isAdminUser) {
+      var usersBtn = document.getElementById('usersBtn');
+      if (usersBtn) usersBtn.style.display = 'none';
     }
 
     document.getElementById('logoutBtn').onclick = function() {
@@ -1188,6 +1402,8 @@
         window.location.href = '/';
       }
     };
+
+    document.getElementById('usersBtn').onclick = function() { openUsersPanel(); };
 
     loadAllData();
 

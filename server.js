@@ -171,4 +171,22 @@ app.listen(PORT, '0.0.0.0', () => {
   for (const ip of ips) {
     console.log('局域网访问：http://' + ip + ':' + PORT);
   }
+
+  const cfPath = 'D:\\新建文件夹\\cloudflared.exe';
+  const { exec } = require('child_process');
+  const cf = exec('"' + cfPath + '" tunnel --url http://localhost:' + PORT, function(err) {
+    if (err) console.log('cloudflared 启动失败，仅局域网可用');
+  });
+  var publicUrl = '';
+  cf.stderr.on('data', function(data) {
+    var text = data.toString();
+    var match = text.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
+    if (match && !publicUrl) {
+      publicUrl = match[0];
+      console.log('\n========== 公网访问 ==========');
+      console.log(publicUrl);
+      console.log('==============================\n');
+      console.log('任何设备均可通过上方地址访问，无需同一局域网');
+    }
+  });
 });

@@ -37,6 +37,9 @@
     return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
   function escapeAttr(s) { return escapeHtml(s).replace(/'/g,'&#39;'); }
+  function getImageSrc(img) { return img && img.indexOf('SHOT:') === 0 ? img.substring(5) : img; }
+  function isShotImage(img) { return img && img.indexOf('SHOT:') === 0; }
+  function getImageList(img) { if (!img) return []; if (isShotImage(img)) return [img.substring(5)]; return img.split('|||').filter(function(s){return s;}); }
 
   function shuffle(arr) {
     for (var i = arr.length - 1; i > 0; i--) {
@@ -216,7 +219,7 @@
     var html = '';
     var qi = 0;
     var qText = escapeHtml(q.question).replace(/\[公式\]/g, function() {
-      if (qi < qImgList.length) return '<img src="' + qImgList[qi++] + '" style="max-height:40px;vertical-align:middle;margin:0 2px">';
+      if (qi < qImgList.length) return '<img src="' + qImgList[qi++] + '" style="max-height:40px;vertical-align:middle;margin:0 2px" class="shot-img">';
       return '[公式]';
     });
     html += '<div style="font-weight:600;margin-bottom:10px">' + qText + '</div>';
@@ -225,7 +228,7 @@
       for (var i = 0; i < q.options.length; i++) {
         var oi = 0;
         var optText = escapeHtml(q.options[i]).replace(/\[公式\]/g, function() {
-          if (oi < optImgLists[i].length) return '<img src="' + optImgLists[i][oi++] + '" style="max-height:36px;vertical-align:middle;margin:0 2px">';
+          if (oi < optImgLists[i].length) return '<img src="' + optImgLists[i][oi++] + '" style="max-height:36px;vertical-align:middle;margin:0 2px" class="shot-img">';
           return '[公式]';
         });
         html += '<div style="margin:4px 0;padding-left:4px">' + String.fromCharCode(65+i) + '. ' + optText + '</div>';
@@ -234,20 +237,33 @@
     }
     tmp.innerHTML = html;
     document.body.appendChild(tmp);
-    if (typeof html2canvas === 'undefined') {
-      document.body.removeChild(tmp);
-      var all = qImgList.concat([].concat.apply([], optImgLists));
-      callback(all.join('|||'));
-      return;
+
+    var imgEls = tmp.querySelectorAll('.shot-img');
+    var imgPending = imgEls.length;
+    function doShot() {
+      if (typeof html2canvas === 'undefined') {
+        document.body.removeChild(tmp);
+        var all = qImgList.concat([].concat.apply([], optImgLists));
+        callback(all.join('|||'));
+        return;
+      }
+      html2canvas(tmp, { backgroundColor: '#ffffff', scale: 2, useCORS: true, allowTaint: true }).then(function(cvs) {
+        document.body.removeChild(tmp);
+        callback('SHOT:' + cvs.toDataURL('image/jpeg', 0.92));
+      }).catch(function() {
+        document.body.removeChild(tmp);
+        var all = qImgList.concat([].concat.apply([], optImgLists));
+        callback(all.join('|||'));
+      });
     }
-    html2canvas(tmp, { backgroundColor: '#ffffff', scale: 2, useCORS: true, allowTaint: true }).then(function(cvs) {
-      document.body.removeChild(tmp);
-      callback(cvs.toDataURL('image/jpeg', 0.92));
-    }).catch(function() {
-      document.body.removeChild(tmp);
-      var all = qImgList.concat([].concat.apply([], optImgLists));
-      callback(all.join('|||'));
-    });
+    if (imgPending === 0) { doShot(); return; }
+    var imgDone = 0;
+    for (var ii = 0; ii < imgEls.length; ii++) {
+      if (imgEls[ii].complete) { imgDone++; if (imgDone >= imgPending) doShot(); }
+      else {
+        imgEls[ii].onload = imgEls[ii].onerror = function() { imgDone++; if (imgDone >= imgPending) doShot(); };
+      }
+    }
   }
 
   function onFileError(msg) {
@@ -757,7 +773,7 @@
       html += '<div class="preview-item-q">' + (i+1) + '. ' + escapeHtml(q.question.substring(0,120)) + '</div>';
       if (q.image) {
         html += '<div class="preview-item-images" style="margin:4px 0">';
-        html += '<img src="' + q.image + '" style="max-width:200px;max-height:200px;border-radius:4px;border:1px solid var(--border);cursor:pointer" onclick="window.open(this.src)" title="点击放大">';
+        html += '<img src="' + getImageSrc(q.image) + '" style="max-width:200px;max-height:200px;border-radius:4px;border:1px solid var(--border);cursor:pointer" onclick="window.open(this.src)" title="点击放大">';
         html += '</div>';
       }
       if (q.options && q.options.length) {
@@ -1042,12 +1058,23 @@
     if (!hasAnswer(q)) h += '<span class="q-tag no-answer">⚠ 无答案</span>';
     h += '</div>';
     h += '<div class="q-number">第 ' + (state.current+1) + ' / ' + state.indices.length + ' 题</div>';
-    var qHtml = q.question && (q.question.indexOf('<p>') !== -1 || q.question.indexOf('<img') !== -1) ? q.question : escapeHtml(q.question);
-    h += '<div class="q-question">' + qHtml + '</div>';
-    if (q.image) {
-      h += '<div class="q-image" style="margin-top:8px;margin-bottom:12px">';
-      h += '<img src="' + q.image + '" style="max-width:100%;border-radius:8px;cursor:pointer;border:1px solid var(--border)" onclick="window.open(this.src)" title="点击放大">';
+    var isShot = q.image && q.image.indexOf('SHOT:') === 0;
+    if (isShot) {
+      var shotSrc = q.image.substring(5);
+      h += '<div class="q-image" style="margin-bottom:12px">';
+      h += '<img src="' + shotSrc + '" style="max-width:100%;border-radius:8px;cursor:pointer;border:1px solid var(--border)" onclick="window.open(this.src)" title="点击放大">';
       h += '</div>';
+    } else {
+      var qHtml = q.question && (q.question.indexOf('<p>') !== -1 || q.question.indexOf('<img') !== -1) ? q.question : escapeHtml(q.question);
+      h += '<div class="q-question">' + qHtml + '</div>';
+      if (q.image) {
+        var imgs = q.image.split('|||');
+        h += '<div class="q-image" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;margin-bottom:12px">';
+        for (var ii = 0; ii < imgs.length; ii++) {
+          if (imgs[ii]) h += '<img src="' + imgs[ii] + '" style="max-width:100%;max-height:400px;border-radius:8px;cursor:pointer;border:1px solid var(--border)" onclick="window.open(this.src)" title="点击放大">';
+        }
+        h += '</div>';
+      }
     }
 
     if (q.type === 'single' || q.type === 'multiple' || q.type === 'judge') {
@@ -1064,7 +1091,9 @@
           if (correct.indexOf(i) !== -1) cls += ' correct';
           else if (sel.indexOf(i) !== -1) cls += ' wrong-answer';
         }
-        if (optHasImg && q.image) {
+        if (isShot) {
+          h += '<li class="'+cls.trim()+'" data-opt="'+i+'" style="min-width:60px;justify-content:center"><span class="opt-label">'+String.fromCharCode(65+i)+'</span></li>';
+        } else if (optHasImg && q.image) {
           h += '<li class="'+cls.trim()+'" data-opt="'+i+'" style="min-width:60px;justify-content:center"><span class="opt-label">'+String.fromCharCode(65+i)+'</span></li>';
         } else {
           var optHtml = opts[i] && (opts[i].indexOf('<p>') !== -1 || opts[i].indexOf('<img') !== -1) ? opts[i] : escapeHtml(opts[i]);
@@ -1516,7 +1545,7 @@
     div.className = 'answer-editor';
 
     var html = '<h4>🖼️ 编辑题目图片</h4>';
-    var currentImages = q.image ? q.image.split('|||').filter(function(s){return s;}) : [];
+    var currentImages = getImageList(q.image);
     html += '<div id="currentImageList" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">';
     for (var ci = 0; ci < currentImages.length; ci++) {
       html += '<div class="img-thumb-wrap" data-imgidx="'+ci+'" style="position:relative;display:inline-block">';
@@ -1537,7 +1566,7 @@
     div.innerHTML = html;
     card.appendChild(div);
 
-    var editorImages = q.image ? q.image.split('|||').filter(function(s){return s;}) : [];
+    var editorImages = getImageList(q.image);
 
     var removeBtns = div.querySelectorAll('.img-remove-btn');
     for (var ri = 0; ri < removeBtns.length; ri++) {
@@ -2098,7 +2127,7 @@
     html += '<div class="cat-editor-row"><span>分类：</span><input type="text" id="aeqCat" value="' + escapeAttr(q.category || '') + '"></div>';
     html += '<div class="form-group"><label>题目内容：</label><textarea id="aeqQuestion" class="paste-area" style="min-height:60px">' + escapeHtml(q.question) + '</textarea></div>';
     if (q.image) {
-      var aeqImgs = q.image.split('|||');
+      var aeqImgs = getImageList(q.image);
       html += '<div style="margin-bottom:8px"><label>题目图片：</label><div style="display:flex;flex-wrap:wrap;gap:4px">';
       for (var ai = 0; ai < aeqImgs.length; ai++) {
         if (aeqImgs[ai]) html += '<img src="' + aeqImgs[ai] + '" style="max-width:100px;max-height:100px;border-radius:4px;border:1px solid var(--border);cursor:pointer" onclick="window.open(this.src)" title="点击放大">';

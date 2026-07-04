@@ -994,7 +994,8 @@
     var valid = [];
     if (hasAnyChecked) {
       for (var ci = 0; ci < cbs.length; ci++) {
-        if (cbs[ci].checked && state.pendingImport[ci] && state.pendingImport[ci]._valid) valid.push(state.pendingImport[ci]);
+        var idx = parseInt(cbs[ci].getAttribute('data-idx'));
+        if (cbs[ci].checked && state.pendingImport[idx]) valid.push(state.pendingImport[idx]);
       }
     } else {
       for (var i = 0; i < state.pendingImport.length; i++) {

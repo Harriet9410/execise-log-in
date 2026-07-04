@@ -127,7 +127,10 @@
   function htmlToTextWithImages(html) {
     var imageMap = {};
     var imgIndex = 0;
-    var processed = html.replace(/<img\s[^>]*src="([^"]*)"[^>]*>/gi, function(match, src) {
+    var processed = html.replace(/<img\s[^>]*>/gi, function(match) {
+      var srcMatch = match.match(/src=["']([^"']+)["']/i);
+      if (!srcMatch) return '';
+      var src = srcMatch[1];
       var imgId = 'img_' + imgIndex++;
       imageMap[imgId] = src;
       return '[IMG:' + imgId + ']';
@@ -146,31 +149,105 @@
       status.className = 'file-status success';
       status.textContent = '文件读取成功，正在解析...';
       var questions = parseQuestions(text);
+      var shotQueue = [];
       for (var i = 0; i < questions.length; i++) {
         var q = questions[i];
-        var imgMarkers = q.question.match(/\[IMG:img_\d+\]/g) || [];
-        var optText = q.options.join(' ');
-        var optMarkers = optText.match(/\[IMG:img_\d+\]/g) || [];
-        var allMarkers = imgMarkers.concat(optMarkers);
-        if (allMarkers.length > 0) {
-          var images = [];
-          for (var j = 0; j < allMarkers.length; j++) {
-            var id = allMarkers[j].match(/\[IMG:(img_\d+)\]/)[1];
-            if (_imageMap[id]) images.push(_imageMap[id]);
-          }
-          q.image = images.join('|||');
+        var allImages = [];
+        var qImgList = [];
+        var optImgLists = [];
+        var optHasImg = false;
+        var qMarkers = q.question.match(/\[IMG:img_\d+\]/g) || [];
+        for (var j = 0; j < qMarkers.length; j++) {
+          var id = qMarkers[j].match(/\[IMG:(img_\d+)\]/)[1];
+          if (_imageMap[id]) { allImages.push(_imageMap[id]); qImgList.push(_imageMap[id]); }
         }
-        q.question = q.question.replace(/\[IMG:img_\d+\]/g, '').replace(/\s{2,}/g, ' ').trim();
         for (var j = 0; j < q.options.length; j++) {
-          q.options[j] = q.options[j].replace(/\[IMG:img_\d+\]/g, '').replace(/\s{2,}/g, ' ').trim();
+          var optMarkers = q.options[j].match(/\[IMG:img_\d+\]/g) || [];
+          var optImgs = [];
+          if (optMarkers.length > 0) {
+            optHasImg = true;
+            for (var k = 0; k < optMarkers.length; k++) {
+              var id = optMarkers[k].match(/\[IMG:(img_\d+)\]/)[1];
+              if (_imageMap[id]) { optImgs.push(_imageMap[id]); allImages.push(_imageMap[id]); }
+            }
+          }
+          optImgLists.push(optImgs);
+          q.options[j] = q.options[j].replace(/\[IMG:img_\d+\]/g, '[公式]').replace(/\s{2,}/g, ' ').trim();
+        }
+        if (optHasImg) q._optImg = true;
+        q.question = q.question.replace(/\[IMG:img_\d+\]/g, '[公式]').replace(/\s{2,}/g, ' ').trim();
+        if (q.type === TYPE_SINGLE && q.options.length < 4 && allImages.length > 0) {
+          while (q.options.length < 4) {
+            q.options.push(String.fromCharCode(65 + q.options.length));
+            optImgLists.push([]);
+          }
+        }
+        if (allImages.length > 0) {
+          (function(qq, qi, oi) {
+            shotQueue.push(function(next) {
+              shotQuestion(qq, qi, oi, function(result) {
+                if (result) qq.image = result;
+                next();
+              });
+            });
+          })(q, qImgList, optImgLists);
         }
       }
-      showPreview(questions);
+      function runQueue(idx) {
+        if (idx >= shotQueue.length) { showPreview(questions); return; }
+        shotQueue[idx](function() { runQueue(idx + 1); });
+      }
+      if (shotQueue.length > 0) {
+        status.textContent = '文件读取成功，正在生成题目截图...';
+        runQueue(0);
+      } else {
+        showPreview(questions);
+      }
     } catch(e) {
       status.className = 'file-status error';
       status.textContent = '解析出错：' + e.message;
       console.error('Parse error:', e);
     }
+  }
+
+  function shotQuestion(q, qImgList, optImgLists, callback) {
+    var tmp = document.createElement('div');
+    tmp.style.cssText = 'position:absolute;left:-9999px;top:0;padding:16px;background:#fff;font-size:16px;line-height:1.8;color:#000;width:600px';
+    var html = '';
+    var qi = 0;
+    var qText = escapeHtml(q.question).replace(/\[公式\]/g, function() {
+      if (qi < qImgList.length) return '<img src="' + qImgList[qi++] + '" style="max-height:40px;vertical-align:middle;margin:0 2px">';
+      return '[公式]';
+    });
+    html += '<div style="font-weight:600;margin-bottom:10px">' + qText + '</div>';
+    if (q.options && q.options.length) {
+      html += '<div style="margin-top:8px">';
+      for (var i = 0; i < q.options.length; i++) {
+        var oi = 0;
+        var optText = escapeHtml(q.options[i]).replace(/\[公式\]/g, function() {
+          if (oi < optImgLists[i].length) return '<img src="' + optImgLists[i][oi++] + '" style="max-height:36px;vertical-align:middle;margin:0 2px">';
+          return '[公式]';
+        });
+        html += '<div style="margin:4px 0;padding-left:4px">' + String.fromCharCode(65+i) + '. ' + optText + '</div>';
+      }
+      html += '</div>';
+    }
+    tmp.innerHTML = html;
+    document.body.appendChild(tmp);
+    if (typeof html2canvas === 'undefined') {
+      document.body.removeChild(tmp);
+      var all = qImgList.concat([].concat.apply([], optImgLists));
+      callback(all.join('|||'));
+      return;
+    }
+    html2canvas(tmp, { backgroundColor: '#ffffff', scale: 2, useCORS: true, allowTaint: true }).then(function(cvs) {
+      document.body.removeChild(tmp);
+      callback(cvs.toDataURL('image/jpeg', 0.92));
+    }).catch(function() {
+      document.body.removeChild(tmp);
+      var all = qImgList.concat([].concat.apply([], optImgLists));
+      callback(all.join('|||'));
+    });
   }
 
   function onFileError(msg) {
@@ -209,7 +286,7 @@
 
     var re1 = /(?:^|\n)\s*[Uu](?:nit)?\s*(\d+)\s*[\n\r]/g;
     var re2 = /(?:^|\n)\s*(视听说|听力|阅读|写作|翻译|口语)\s*[\n\r]/g;
-    var re3 = /(?:^|\n)\s*[一二三四五六七八九十]+[、.．]\s*(单选题|多选题|判断题|填空题|问答题|简答题|论述题|计算题|编程题|选择题|综合题)[^\n]*[\n\r]/g;
+    var re3 = /(?:^|\n)\s*[一二三四五六七八九十]+[、.．\s]\s*(单选题|多选题|判断题|填空题|问答题|简答题|论述题|计算题|编程题|选择题|综合题)[^\n]*[\n\r]/g;
     var m;
     while ((m = re1.exec(text)) !== null) allBreaks.push({ idx: m.index, cat: 'Unit ' + m[1], typeHint: '' });
     while ((m = re2.exec(text)) !== null) allBreaks.push({ idx: m.index, cat: m[1], typeHint: '' });
@@ -230,7 +307,7 @@
     var allQuestions = [];
     for (var s = 0; s < sections.length; s++) {
       var secText = sections[s].text.replace(/^\s*[Uu](?:nit)?\s*\d+\s*\n/, '').replace(/^\s*(视听说|听力|阅读|写作|翻译|口语)\s*\n/, '');
-      secText = secText.replace(/^\s*[一二三四五六七八九十]+[、.．]\s*(?:单选题|多选题|判断题|填空题|问答题|简答题|论述题|计算题|编程题|选择题|综合题)[^\n]*\n/, '');
+      secText = secText.replace(/^\s*[一二三四五六七八九十]+[、.．\s]\s*(?:单选题|多选题|判断题|填空题|问答题|简答题|论述题|计算题|编程题|选择题|综合题)[^\n]*\n/, '');
       var qs = parseSection(secText, sections[s].cat, sections[s].typeHint);
       for (var i = 0; i < qs.length; i++) allQuestions.push(qs[i]);
     }
@@ -323,6 +400,10 @@
     if (/^[a-z]\(cm\)$/i.test(line)) return true;
     if (/^[a-z]\(m\)$/i.test(line)) return true;
     if (/^[a-z]\(s\)$/i.test(line)) return true;
+    if (/^\d+[a-zA-Z]\d+\s+[a-zA-Z]\d+$/.test(line) && line.length < 20) return true;
+    if (/^[a-zA-Z]\d+\s+[a-zA-Z]\d+$/.test(line) && line.length < 20) return true;
+    if (/^\d+[a-zA-Z]\d*$/.test(line) && line.length <= 6 && !/^\d{1,4}\s*[.、)）.．\]:：]/.test(line)) return true;
+    if (/^[a-zA-Z]\d+$/.test(line) && line.length <= 4 && !/^[A-Da-d]\d+$/.test(line)) return true;
     return false;
   }
 
@@ -339,6 +420,12 @@
     for (var i = 0; i < cleanLines.length; i++) {
       var lt = cleanLines[i];
       if (isFigureLabel(lt)) continue;
+      var imgOnlyMatch = lt.match(/^\[IMG:img_\d+\]$/);
+      var shortImgLine = /\[IMG:img_\d+\]/.test(lt) && lt.replace(/\[IMG:img_\d+\]/g, '').trim().length <= 2;
+      if ((imgOnlyMatch || shortImgLine) && preprocessed.length > 0) {
+        preprocessed[preprocessed.length - 1] = preprocessed[preprocessed.length - 1] + ' ' + lt;
+        continue;
+      }
       preprocessed.push(lt);
     }
 
@@ -382,9 +469,28 @@
       crossMerged.push(lt);
     }
 
-    var expanded = [];
-    for (var i = 0; i < crossMerged.length; i++) {
-      var lt = crossMerged[i];
+     var expanded = [];
+     for (var i = 0; i < crossMerged.length; i++) {
+       var lt = crossMerged[i];
+       var imgTokens = [];
+       var ltMasked = lt.replace(/\[IMG:img_\d+\]/g, function(m) { imgTokens.push(m); return '\x00' + (imgTokens.length - 1) + '\x01'; });
+       var inlineQSplit = ltMasked.match(/^(.*?[）)][^（(（\d]*?)([（(]?\s*\d{1,4}\s*[、.．)）.．\]:：]\s*\S.*?)$/);
+       if (inlineQSplit && inlineQSplit[1].length > 6) {
+         var beforePart = inlineQSplit[1].trim().replace(/\x00(\d+)\x01/g, function(_, idx) { return imgTokens[parseInt(idx)]; });
+         var afterPart = inlineQSplit[2].trim().replace(/\x00(\d+)\x01/g, function(_, idx) { return imgTokens[parseInt(idx)]; });
+          var afterQNumMatch = afterPart.match(/^\d{1,4}\s*([.．])/);
+          var isDecimal = afterQNumMatch && /^\d{1,4}\.\s*\d/.test(afterPart);
+         if (!isDecimal) {
+           var beforeOpts = (beforePart.match(/(?:[（(]\s*)?[A-D]\s*(?:[.、)）.．:：]\s*|[)）]\s*)/g) || []).length;
+           if (beforeOpts >= 2 || /[）)]\s*$/.test(beforePart) || /(?:相同|确定|相等|正确|错误|不等|无关)\s*$/.test(beforePart)) {
+             var beforeSplit = splitInlineOpts(beforePart);
+             if (beforeSplit) { for (var bp = 0; bp < beforeSplit.length; bp++) { if (beforeSplit[bp] && beforeSplit[bp].trim()) expanded.push(beforeSplit[bp]); } }
+             else { expanded.push(beforePart); }
+             expanded.push(afterPart);
+             continue;
+           }
+         }
+       }
       var inlineParts = splitInlineOpts(lt);
       if (inlineParts) { for (var p = 0; p < inlineParts.length; p++) { if (inlineParts[p] && inlineParts[p].trim()) expanded.push(inlineParts[p]); } continue; }
       expanded.push(lt);
@@ -412,14 +518,15 @@
     var blocks = [], current = [], currentType = typeHint || '';
     for (var i = 0; i < merged.length; i++) {
       var t = merged[i];
-      var headerMatch = t.match(/^[一二三四五六七八九十]+[、.．]\s*(单选题|多选题|判断题|填空题|问答题|简答题|论述题|计算题|编程题|选择题|综合题)/);
+      var headerMatch = t.match(/^[一二三四五六七八九十]+[、.．\s]\s*(单选题|多选题|判断题|填空题|问答题|简答题|论述题|计算题|编程题|选择题|综合题)/);
       if (headerMatch) {
         if (current.length) { blocks.push({ text: current.join('\n'), typeHint: currentType }); current = []; }
         currentType = detectSectionType(headerMatch[1]);
         continue;
       }
-      if (isGraphArtifact(t) && !/^\d{1,4}\s*[.、)）.．\]:：]/.test(t)) continue;
-      var isQ = (/^\d{1,4}\s*[.、)）.．\]:：]/.test(t) && !/^\d+\.\d+/.test(t)) || (/^\d{1,4}\.\s*\S/.test(t) && !/^\d+\.\d+/.test(t));
+      if (isGraphArtifact(t) && !/^\d{1,4}\s*[.、)）.．\]:：]/.test(t) && !/^\[IMG:img_\d+\]\s*\d{1,4}\s*[.、)）.．\]:：]/.test(t)) continue;
+      var tForQCheck = t.replace(/^\[IMG:img_\d+\]\s*/, '');
+      var isQ = (/^\d{1,4}\s*[.、)）.．\]:：]/.test(tForQCheck) && !/^\d+\.\d+/.test(tForQCheck)) || (/^\d{1,4}\.\s*\S/.test(tForQCheck) && !/^\d+\.\d+/.test(tForQCheck));
       if (/^第\s*\d+\s*章/.test(t)) continue;
       if (isQ && current.length) { blocks.push({ text: current.join('\n'), typeHint: currentType }); current = []; }
       current.push(t);
@@ -628,6 +735,15 @@
     count.textContent = questions.length + ' 题';
     list.innerHTML = '';
 
+    var toolbar = document.createElement('div');
+    toolbar.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;padding:8px 12px;background:var(--card);border-radius:8px;border:1px solid var(--border)';
+    toolbar.innerHTML = '<label style="cursor:pointer;font-size:13px"><input type="checkbox" id="previewSelectAll"> 全选</label>' +
+      '<label style="cursor:pointer;font-size:13px"><input type="checkbox" id="previewDeselectAll"> 取消全选</label>' +
+      '<button class="btn btn-danger" id="previewDeleteSelected" style="padding:4px 12px;font-size:12px">🗑️ 删除选中</button>' +
+      '<select id="previewBatchType" style="padding:4px 8px;border-radius:4px;border:1px solid var(--border);font-size:13px"><option value="">批量改题型</option><option value="single">单选</option><option value="multiple">多选</option><option value="fill">填空</option><option value="judge">判断</option><option value="qa">问答</option></select>' +
+      '<button class="btn" id="previewBatchTypeBtn" style="padding:4px 12px;font-size:12px">🏷️ 应用题型</button>';
+    list.appendChild(toolbar);
+
     for (var i = 0; i < questions.length; i++) {
       var q = questions[i];
       var ansStr = '';
@@ -636,12 +752,20 @@
       else if (q.type === 'judge') ansStr = q.answer ? '正确' : '错误';
       else ansStr = String(q.answer).substring(0,100);
 
-      var html = '<span class="preview-item-type">' + (typeNames[q.type]||q.type) + '</span>';
-      if (q.image) html += '<span style="color:var(--accent);margin-left:4px;font-size:12px">🖼 含图</span>';
+      var html = '<label style="cursor:pointer"><input type="checkbox" class="preview-check" data-idx="'+i+'" style="margin-right:6px"></label>';
+      html += '<span class="preview-item-type">' + (typeNames[q.type]||q.type) + '</span>';
       html += '<div class="preview-item-q">' + (i+1) + '. ' + escapeHtml(q.question.substring(0,120)) + '</div>';
+      if (q.image) {
+        html += '<div class="preview-item-images" style="margin:4px 0">';
+        html += '<img src="' + q.image + '" style="max-width:200px;max-height:200px;border-radius:4px;border:1px solid var(--border);cursor:pointer" onclick="window.open(this.src)" title="点击放大">';
+        html += '</div>';
+      }
       if (q.options && q.options.length) {
         html += '<div class="preview-item-opts">';
-        for (var j = 0; j < q.options.length; j++) html += String.fromCharCode(65+j) + '. ' + escapeHtml(q.options[j]) + '  ';
+        for (var j = 0; j < q.options.length; j++) {
+          var optText = q.options[j] && q.options[j].indexOf('<img') !== -1 ? q.options[j] : escapeHtml(q.options[j]);
+          html += String.fromCharCode(65+j) + '. ' + optText + '  ';
+        }
         html += '</div>';
       }
       html += '<div class="preview-item-ans">' + (ansStr ? '答案：' + escapeHtml(ansStr) : '<span style="color:var(--red)">⚠ 无答案</span>') + '</div>';
@@ -652,13 +776,60 @@
     }
 
     area.style.display = 'block';
+
+    document.getElementById('previewSelectAll').onclick = function() {
+      var cbs = list.querySelectorAll('.preview-check');
+      for (var ci = 0; ci < cbs.length; ci++) cbs[ci].checked = true;
+      this.checked = false;
+    };
+    document.getElementById('previewDeselectAll').onclick = function() {
+      var cbs = list.querySelectorAll('.preview-check');
+      for (var ci = 0; ci < cbs.length; ci++) cbs[ci].checked = false;
+      this.checked = false;
+    };
+    document.getElementById('previewDeleteSelected').onclick = function() {
+      var cbs = list.querySelectorAll('.preview-check');
+      var toDelete = [];
+      for (var ci = 0; ci < cbs.length; ci++) { if (cbs[ci].checked) toDelete.push(parseInt(cbs[ci].getAttribute('data-idx'))); }
+      if (!toDelete.length) { alert('请先勾选题目'); return; }
+      if (!confirm('确定删除选中的 ' + toDelete.length + ' 道题？')) return;
+      toDelete.sort(function(a,b){return b-a;});
+      for (var di = 0; di < toDelete.length; di++) questions.splice(toDelete[di], 1);
+      showPreview(questions);
+    };
+    document.getElementById('previewBatchTypeBtn').onclick = function() {
+      var newType = document.getElementById('previewBatchType').value;
+      if (!newType) { alert('请先选择题型'); return; }
+      var cbs = list.querySelectorAll('.preview-check');
+      var count = 0;
+      for (var ci = 0; ci < cbs.length; ci++) {
+        if (cbs[ci].checked) {
+          var idx = parseInt(cbs[ci].getAttribute('data-idx'));
+          questions[idx].type = newType;
+          questions[idx]._valid = true;
+          count++;
+        }
+      }
+      if (!count) { alert('请先勾选题目'); return; }
+      showPreview(questions);
+    };
   }
 
   function doConfirmImport() {
     if (!state.pendingImport || !state.pendingImport.length) return;
+    var list = document.getElementById('previewList');
+    var cbs = list.querySelectorAll('.preview-check');
+    var hasAnyChecked = false;
+    for (var ci = 0; ci < cbs.length; ci++) { if (cbs[ci].checked) { hasAnyChecked = true; break; } }
     var valid = [];
-    for (var i = 0; i < state.pendingImport.length; i++) {
-      if (state.pendingImport[i]._valid) valid.push(state.pendingImport[i]);
+    if (hasAnyChecked) {
+      for (var ci = 0; ci < cbs.length; ci++) {
+        if (cbs[ci].checked && state.pendingImport[ci] && state.pendingImport[ci]._valid) valid.push(state.pendingImport[ci]);
+      }
+    } else {
+      for (var i = 0; i < state.pendingImport.length; i++) {
+        if (state.pendingImport[i]._valid) valid.push(state.pendingImport[i]);
+      }
     }
     if (!valid.length) { alert('没有有效题目'); return; }
 
@@ -871,20 +1042,18 @@
     if (!hasAnswer(q)) h += '<span class="q-tag no-answer">⚠ 无答案</span>';
     h += '</div>';
     h += '<div class="q-number">第 ' + (state.current+1) + ' / ' + state.indices.length + ' 题</div>';
-    if (q.image) {
-      var imgs = q.image.split('|||');
-      h += '<div class="q-image" style="display:flex;flex-wrap:wrap;gap:8px">';
-      for (var ii = 0; ii < imgs.length; ii++) {
-        if (imgs[ii]) h += '<img src="' + imgs[ii] + '" style="max-width:100%;max-height:300px;border-radius:8px;cursor:pointer" onclick="window.open(this.src)" title="点击放大">';
-      }
-      h += '</div>';
-    }
     var qHtml = q.question && (q.question.indexOf('<p>') !== -1 || q.question.indexOf('<img') !== -1) ? q.question : escapeHtml(q.question);
     h += '<div class="q-question">' + qHtml + '</div>';
+    if (q.image) {
+      h += '<div class="q-image" style="margin-top:8px;margin-bottom:12px">';
+      h += '<img src="' + q.image + '" style="max-width:100%;border-radius:8px;cursor:pointer;border:1px solid var(--border)" onclick="window.open(this.src)" title="点击放大">';
+      h += '</div>';
+    }
 
     if (q.type === 'single' || q.type === 'multiple' || q.type === 'judge') {
       var opts = q.type === 'judge' ? ['正确','错误'] : q.options;
       var multi = q.type === 'multiple';
+      var optHasImg = q._optImg || (opts.length > 0 && opts.some(function(o) { return o && o.indexOf('[公式]') !== -1; }));
       h += '<ul class="q-options">';
       for (var i = 0; i < opts.length; i++) {
         var cls = '';
@@ -895,8 +1064,12 @@
           if (correct.indexOf(i) !== -1) cls += ' correct';
           else if (sel.indexOf(i) !== -1) cls += ' wrong-answer';
         }
-        var optHtml = opts[i] && (opts[i].indexOf('<p>') !== -1 || opts[i].indexOf('<img') !== -1) ? opts[i] : escapeHtml(opts[i]);
-        h += '<li class="'+cls.trim()+'" data-opt="'+i+'"><span class="opt-label">'+String.fromCharCode(65+i)+'</span><span>'+optHtml+'</span></li>';
+        if (optHasImg && q.image) {
+          h += '<li class="'+cls.trim()+'" data-opt="'+i+'" style="min-width:60px;justify-content:center"><span class="opt-label">'+String.fromCharCode(65+i)+'</span></li>';
+        } else {
+          var optHtml = opts[i] && (opts[i].indexOf('<p>') !== -1 || opts[i].indexOf('<img') !== -1) ? opts[i] : escapeHtml(opts[i]);
+          h += '<li class="'+cls.trim()+'" data-opt="'+i+'"><span class="opt-label">'+String.fromCharCode(65+i)+'</span><span>'+optHtml+'</span></li>';
+        }
       }
       h += '</ul>';
     } else if (q.type === 'fill') {
@@ -928,7 +1101,15 @@
       if (q.type==='single'||q.type==='multiple'||q.type==='judge') {
         var ansOpts = q.type==='judge'?['正确','错误']:q.options;
         var ansArr = q.type==='judge'?(q.answer?[0]:[1]):(q.type==='multiple'?q.answer:[q.answer]);
-        for (var i = 0; i < ansArr.length; i++) h += String.fromCharCode(65+ansArr[i])+'. '+escapeHtml(ansOpts[ansArr[i]])+'<br>';
+        var ansOptHasImg = q._optImg || (ansOpts.some && ansOpts.some(function(o) { return o && o.indexOf('[公式]') !== -1; }));
+        for (var i = 0; i < ansArr.length; i++) {
+          if (ansOptHasImg && q.image) {
+            h += String.fromCharCode(65+ansArr[i]) + '<br>';
+          } else {
+            var ansOptText = ansOpts[ansArr[i]] && ansOpts[ansArr[i]].indexOf('<img') !== -1 ? ansOpts[ansArr[i]] : escapeHtml(ansOpts[ansArr[i]]);
+            h += String.fromCharCode(65+ansArr[i])+'. '+ansOptText+'<br>';
+          }
+        }
       } else { h += escapeHtml(String(q.answer)); }
       h += '</div>';
       if (q.explanation) h += '<div class="answer-explanation">💡 '+escapeHtml(q.explanation)+'</div>';
@@ -1309,7 +1490,7 @@
       var img = new Image();
       img.onload = function() {
         var canvas = document.createElement('canvas');
-        var maxW = 800, maxH = 800;
+        var maxW = 1200, maxH = 1200;
         var w = img.width, h = img.height;
         if (w > maxW || h > maxH) {
           if (w / maxW > h / maxH) { h = Math.round(h * maxW / w); w = maxW; }
@@ -1317,7 +1498,7 @@
         }
         canvas.width = w; canvas.height = h;
         canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        callback(canvas.toDataURL('image/jpeg', 0.7));
+        callback(canvas.toDataURL('image/jpeg', 0.85));
       };
       img.src = e.target.result;
     };
@@ -1335,47 +1516,76 @@
     div.className = 'answer-editor';
 
     var html = '<h4>🖼️ 编辑题目图片</h4>';
-    if (q.image) {
-      html += '<div style="margin-bottom:8px"><img src="' + q.image + '" style="max-width:100%;max-height:200px;border-radius:8px;border:1px solid var(--border)"></div>';
+    var currentImages = q.image ? q.image.split('|||').filter(function(s){return s;}) : [];
+    html += '<div id="currentImageList" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">';
+    for (var ci = 0; ci < currentImages.length; ci++) {
+      html += '<div class="img-thumb-wrap" data-imgidx="'+ci+'" style="position:relative;display:inline-block">';
+      html += '<img src="' + currentImages[ci] + '" style="max-width:120px;max-height:120px;border-radius:6px;border:1px solid var(--border);cursor:pointer" onclick="window.open(this.src)" title="点击放大">';
+      html += '<button class="img-remove-btn" data-imgidx="'+ci+'" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:12px;cursor:pointer;line-height:20px;padding:0">×</button>';
+      html += '</div>';
     }
-    html += '<div class="file-row" style="margin-bottom:8px">';
-    html += '<input type="file" id="imgFileInput" accept="image/*" style="flex:1">';
     html += '</div>';
-    html += '<p class="editor-hint">支持上传截图、照片等图片，会自动压缩</p>';
+    html += '<div class="file-row" style="margin-bottom:8px">';
+    html += '<input type="file" id="imgFileInput" accept="image/*" multiple style="flex:1">';
+    html += '</div>';
+    html += '<p class="editor-hint">支持上传多张图片（截图、照片等），会自动压缩；点击 × 可删除单张图片</p>';
     html += '<div class="editor-actions">';
     html += '<button class="btn btn-primary" id="saveImageBtn">💾 保存图片</button>';
-    if (q.image) html += '<button class="btn btn-danger" id="removeImageBtn">🗑️ 删除图片</button>';
     html += '<button class="btn" id="cancelImageBtn">取消</button>';
     html += '</div>';
 
     div.innerHTML = html;
     card.appendChild(div);
 
-    var pendingImage = null;
+    var editorImages = q.image ? q.image.split('|||').filter(function(s){return s;}) : [];
+
+    var removeBtns = div.querySelectorAll('.img-remove-btn');
+    for (var ri = 0; ri < removeBtns.length; ri++) {
+      removeBtns[ri].onclick = function(ev) {
+        var idx = parseInt(this.getAttribute('data-imgidx'));
+        editorImages.splice(idx, 1);
+        this.parentElement.remove();
+        var wraps = div.querySelectorAll('.img-thumb-wrap');
+        for (var wi = 0; wi < wraps.length; wi++) wraps[wi].setAttribute('data-imgidx', wi);
+        var rmBtns2 = div.querySelectorAll('.img-remove-btn');
+        for (var bi = 0; bi < rmBtns2.length; bi++) rmBtns2[bi].setAttribute('data-imgidx', bi);
+      };
+    }
 
     document.getElementById('imgFileInput').onchange = function(e) {
-      if (e.target.files && e.target.files[0]) {
-        readImageAsBase64(e.target.files[0], function(dataUrl) { pendingImage = dataUrl; });
+      if (e.target.files && e.target.files.length) {
+        var remaining = e.target.files.length;
+        for (var fi = 0; fi < e.target.files.length; fi++) {
+          (function(file) {
+            readImageAsBase64(file, function(dataUrl) {
+              editorImages.push(dataUrl);
+              var list = document.getElementById('currentImageList');
+              var wrap = document.createElement('div');
+              wrap.className = 'img-thumb-wrap';
+              wrap.setAttribute('data-imgidx', editorImages.length - 1);
+              wrap.style.cssText = 'position:relative;display:inline-block';
+              wrap.innerHTML = '<img src="' + dataUrl + '" style="max-width:120px;max-height:120px;border-radius:6px;border:1px solid var(--border);cursor:pointer" onclick="window.open(this.src)" title="点击放大"><button class="img-remove-btn" data-imgidx="'+(editorImages.length-1)+'" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:12px;cursor:pointer;line-height:20px;padding:0">×</button>';
+              wrap.querySelector('.img-remove-btn').onclick = function() {
+                var idx2 = parseInt(this.getAttribute('data-imgidx'));
+                editorImages.splice(idx2, 1);
+                this.parentElement.remove();
+              };
+              list.appendChild(wrap);
+            });
+          })(e.target.files[fi]);
+        }
       }
     };
 
     document.getElementById('saveImageBtn').onclick = function() {
-      if (pendingImage) {
-        q.image = pendingImage;
-        api('PUT', '/questions/' + encodeURIComponent(q.id), { image: q.image }).then(function() { renderQuiz(); });
-      } else if (!q.image) {
-        alert('请先选择图片');
-        return;
+      if (editorImages.length > 0) {
+        q.image = editorImages.join('|||');
+      } else {
+        delete q.image;
       }
+      api('PUT', '/questions/' + encodeURIComponent(q.id), { image: q.image || '' }).then(function() { renderQuiz(); });
       div.remove();
     };
-
-    if (q.image) {
-      document.getElementById('removeImageBtn').onclick = function() {
-        delete q.image;
-        api('PUT', '/questions/' + encodeURIComponent(q.id), { image: '' }).then(function() { div.remove(); renderQuiz(); });
-      };
-    }
 
     document.getElementById('cancelImageBtn').onclick = function() { div.remove(); };
   }
@@ -1392,11 +1602,11 @@
 
     if (q.type === 'single') {
       html += '<p class="editor-hint">选择正确选项：</p><div class="editor-options">';
-      for (var i = 0; i < q.options.length; i++) { var checked = (typeof q.answer === 'number' && q.answer === i) ? ' checked' : ''; html += '<label class="editor-opt"><input type="radio" name="ansRadio" value="' + i + '"' + checked + '> ' + String.fromCharCode(65+i) + '. ' + escapeHtml(q.options[i]) + '</label>'; }
+      for (var i = 0; i < q.options.length; i++) { var checked = (typeof q.answer === 'number' && q.answer === i) ? ' checked' : ''; var optE = q.options[i] && q.options[i].indexOf('<img') !== -1 ? q.options[i] : escapeHtml(q.options[i]); html += '<label class="editor-opt"><input type="radio" name="ansRadio" value="' + i + '"' + checked + '> ' + String.fromCharCode(65+i) + '. ' + optE + '</label>'; }
       html += '</div>';
     } else if (q.type === 'multiple') {
       html += '<p class="editor-hint">选择所有正确选项（可多选）：</p><div class="editor-options">';
-      for (var i = 0; i < q.options.length; i++) { var checked = (Array.isArray(q.answer) && q.answer.indexOf(i) !== -1) ? ' checked' : ''; html += '<label class="editor-opt"><input type="checkbox" name="ansCheck" value="' + i + '"' + checked + '> ' + String.fromCharCode(65+i) + '. ' + escapeHtml(q.options[i]) + '</label>'; }
+      for (var i = 0; i < q.options.length; i++) { var checked = (Array.isArray(q.answer) && q.answer.indexOf(i) !== -1) ? ' checked' : ''; var optE = q.options[i] && q.options[i].indexOf('<img') !== -1 ? q.options[i] : escapeHtml(q.options[i]); html += '<label class="editor-opt"><input type="checkbox" name="ansCheck" value="' + i + '"' + checked + '> ' + String.fromCharCode(65+i) + '. ' + optE + '</label>'; }
       html += '</div>';
     } else if (q.type === 'judge') {
       var chkT = (q.answer === true) ? ' checked' : '';
@@ -1887,19 +2097,29 @@
     html += '<div class="cat-editor-row"><span>科目：</span><input type="text" id="aeqSubj" value="' + escapeAttr(q.subject || '') + '"></div>';
     html += '<div class="cat-editor-row"><span>分类：</span><input type="text" id="aeqCat" value="' + escapeAttr(q.category || '') + '"></div>';
     html += '<div class="form-group"><label>题目内容：</label><textarea id="aeqQuestion" class="paste-area" style="min-height:60px">' + escapeHtml(q.question) + '</textarea></div>';
+    if (q.image) {
+      var aeqImgs = q.image.split('|||');
+      html += '<div style="margin-bottom:8px"><label>题目图片：</label><div style="display:flex;flex-wrap:wrap;gap:4px">';
+      for (var ai = 0; ai < aeqImgs.length; ai++) {
+        if (aeqImgs[ai]) html += '<img src="' + aeqImgs[ai] + '" style="max-width:100px;max-height:100px;border-radius:4px;border:1px solid var(--border);cursor:pointer" onclick="window.open(this.src)" title="点击放大">';
+      }
+      html += '</div></div>';
+    }
 
     if (q.type === 'single') {
       html += '<p class="editor-hint">选择正确选项：</p><div class="editor-options">';
       for (var i = 0; i < q.options.length; i++) {
         var checked = (typeof q.answer === 'number' && q.answer === i) ? ' checked' : '';
-        html += '<label class="editor-opt"><input type="radio" name="aeqRadio" value="' + i + '"' + checked + '> ' + String.fromCharCode(65+i) + '. ' + escapeHtml(q.options[i]) + '</label>';
+        var optE = q.options[i] && q.options[i].indexOf('<img') !== -1 ? q.options[i] : escapeHtml(q.options[i]);
+        html += '<label class="editor-opt"><input type="radio" name="aeqRadio" value="' + i + '"' + checked + '> ' + String.fromCharCode(65+i) + '. ' + optE + '</label>';
       }
       html += '</div>';
     } else if (q.type === 'multiple') {
       html += '<p class="editor-hint">选择正确选项：</p><div class="editor-options">';
       for (var i = 0; i < q.options.length; i++) {
         var checked = (Array.isArray(q.answer) && q.answer.indexOf(i) !== -1) ? ' checked' : '';
-        html += '<label class="editor-opt"><input type="checkbox" name="aeqCheck" value="' + i + '"' + checked + '> ' + String.fromCharCode(65+i) + '. ' + escapeHtml(q.options[i]) + '</label>';
+        var optE = q.options[i] && q.options[i].indexOf('<img') !== -1 ? q.options[i] : escapeHtml(q.options[i]);
+        html += '<label class="editor-opt"><input type="checkbox" name="aeqCheck" value="' + i + '"' + checked + '> ' + String.fromCharCode(65+i) + '. ' + optE + '</label>';
       }
       html += '</div>';
     } else if (q.type === 'judge') {

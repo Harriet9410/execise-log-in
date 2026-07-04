@@ -71,8 +71,11 @@
       loadScript('https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js', function() {
         var reader = new FileReader();
         reader.onload = function(e) {
-          window.mammoth.extractRawText({ arrayBuffer: e.target.result })
-            .then(function(r) { onFileParsed(r.value); })
+          window.mammoth.convertToHtml({ arrayBuffer: e.target.result })
+            .then(function(r) {
+              var result = htmlToTextWithImages(r.value);
+              onFileParsed(result.text, result.imageMap);
+            })
             .catch(function(err) { onFileError('解析DOCX失败：' + err.message); });
         };
         reader.readAsArrayBuffer(file);
@@ -119,12 +122,49 @@
     document.head.appendChild(s);
   }
 
-  function onFileParsed(text) {
+  var _imageMap = {};
+
+  function htmlToTextWithImages(html) {
+    var imageMap = {};
+    var imgIndex = 0;
+    var processed = html.replace(/<img\s[^>]*src="([^"]*)"[^>]*>/gi, function(match, src) {
+      var imgId = 'img_' + imgIndex++;
+      imageMap[imgId] = src;
+      return '[IMG:' + imgId + ']';
+    });
+    processed = processed.replace(/<\/p>/gi, '\n');
+    processed = processed.replace(/<br\s*\/?>/gi, '\n');
+    processed = processed.replace(/<[^>]+>/g, '');
+    var decoded = processed.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ');
+    return { text: decoded, imageMap: imageMap };
+  }
+
+  function onFileParsed(text, imageMap) {
+    _imageMap = imageMap || {};
     var status = document.getElementById('fileStatus');
     try {
       status.className = 'file-status success';
       status.textContent = '文件读取成功，正在解析...';
       var questions = parseQuestions(text);
+      for (var i = 0; i < questions.length; i++) {
+        var q = questions[i];
+        var imgMarkers = q.question.match(/\[IMG:img_\d+\]/g) || [];
+        var optText = q.options.join(' ');
+        var optMarkers = optText.match(/\[IMG:img_\d+\]/g) || [];
+        var allMarkers = imgMarkers.concat(optMarkers);
+        if (allMarkers.length > 0) {
+          var images = [];
+          for (var j = 0; j < allMarkers.length; j++) {
+            var id = allMarkers[j].match(/\[IMG:(img_\d+)\]/)[1];
+            if (_imageMap[id]) images.push(_imageMap[id]);
+          }
+          q.image = images.join('|||');
+        }
+        q.question = q.question.replace(/\[IMG:img_\d+\]/g, '').replace(/\s{2,}/g, ' ').trim();
+        for (var j = 0; j < q.options.length; j++) {
+          q.options[j] = q.options[j].replace(/\[IMG:img_\d+\]/g, '').replace(/\s{2,}/g, ' ').trim();
+        }
+      }
       showPreview(questions);
     } catch(e) {
       status.className = 'file-status error';
@@ -243,6 +283,8 @@
     if (/^[（(]\s*[A-Da-d]\s*[)）]/.test(line)) return true;
     if (/^[Ａ-Ｈａ-ｈ]\s*[.、)）.．:：]\s*/.test(line)) return true;
     if (/^[A-Da-d]\s*[\u4e00-\u9fff]/.test(line)) return true;
+    if (/^[（(]\s*[A-Da-d]\s*[)）]\s*\[IMG:/.test(line)) return true;
+    if (/^[A-Da-d]\s*[.、)）.．:：]\s*\[IMG:/.test(line)) return true;
     return false;
   }
 
@@ -255,6 +297,7 @@
   }
 
   function isGraphArtifact(line) {
+    if (/\[IMG:img_\d+\]/.test(line)) return false;
     if (/^[A-Za-z]\s*[A-Za-z]/.test(line) && line.length < 20 && !/^[A-Da-d]\s*[.、)）.．:：]/.test(line) && !/^[（(]\s*[A-Da-d]/.test(line)) {
       if (/^[a-zA-Z]\s*\(?[a-zA-Z]/.test(line)) return true;
     }
@@ -315,18 +358,22 @@
           while ((m2 = nxtOptRe.exec(nxt)) !== null) nxtOpts.push(m2.index);
           if (nxtOpts.length >= 1 && nxtOpts[0] < 3) {
             var curLastLetter = '';
+            var curFirstLetter = '';
             var tmpRe = /(?:[（(]\s*)?([A-D])\s*(?:[.、)）.．:：]\s*|[)）]\s*)/g;
             var tm;
-            while ((tm = tmpRe.exec(lt)) !== null) curLastLetter = tm[1];
+            while ((tm = tmpRe.exec(lt)) !== null) { if (!curFirstLetter) curFirstLetter = tm[1]; curLastLetter = tm[1]; }
             var nxtFirstLetter = '';
             tmpRe.lastIndex = 0;
             while ((tm = tmpRe.exec(nxt)) !== null) { nxtFirstLetter = tm[1]; break; }
             if (curLastLetter && nxtFirstLetter) {
               var curCode = curLastLetter.charCodeAt(0);
               var nxtCode = nxtFirstLetter.charCodeAt(0);
-              if (nxtCode > curCode && nxtCode <= 68) {
-                lt = lt + ' ' + nxt;
-                i++;
+              if (nxtCode > curCode && nxtCode <= curCode + 2 && nxtCode <= 68) {
+                if (curCode === 68 && curOpts.length >= 3) { /* skip */ }
+                else {
+                  lt = lt + ' ' + nxt;
+                  i++;
+                }
               }
             }
           }
@@ -590,6 +637,7 @@
       else ansStr = String(q.answer).substring(0,100);
 
       var html = '<span class="preview-item-type">' + (typeNames[q.type]||q.type) + '</span>';
+      if (q.image) html += '<span style="color:var(--accent);margin-left:4px;font-size:12px">🖼 含图</span>';
       html += '<div class="preview-item-q">' + (i+1) + '. ' + escapeHtml(q.question.substring(0,120)) + '</div>';
       if (q.options && q.options.length) {
         html += '<div class="preview-item-opts">';
@@ -823,7 +871,14 @@
     if (!hasAnswer(q)) h += '<span class="q-tag no-answer">⚠ 无答案</span>';
     h += '</div>';
     h += '<div class="q-number">第 ' + (state.current+1) + ' / ' + state.indices.length + ' 题</div>';
-    if (q.image) h += '<div class="q-image"><img src="' + q.image + '" style="max-width:100%;border-radius:8px;cursor:pointer" onclick="window.open(this.src)" title="点击放大"></div>';
+    if (q.image) {
+      var imgs = q.image.split('|||');
+      h += '<div class="q-image" style="display:flex;flex-wrap:wrap;gap:8px">';
+      for (var ii = 0; ii < imgs.length; ii++) {
+        if (imgs[ii]) h += '<img src="' + imgs[ii] + '" style="max-width:100%;max-height:300px;border-radius:8px;cursor:pointer" onclick="window.open(this.src)" title="点击放大">';
+      }
+      h += '</div>';
+    }
     var qHtml = q.question && (q.question.indexOf('<p>') !== -1 || q.question.indexOf('<img') !== -1) ? q.question : escapeHtml(q.question);
     h += '<div class="q-question">' + qHtml + '</div>';
 

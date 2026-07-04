@@ -57,16 +57,34 @@
       <div id="importBody" class="import-body" style="display:none">
       <div class="file-row">
         <span>选择文件：</span>
-        <input type="file" id="fileInput" accept=".txt,.doc,.docx,.pdf">
+        <input type="file" id="fileInput" accept=".txt,.doc,.docx,.pdf,.xlsx,.xls,.png,.jpg,.jpeg,.bmp,.webp">
       </div>
       <div id="fileStatus" class="file-status hidden"></div>
-      <p class="import-hint">或从 Word/PDF 复制文本，粘贴到下方：</p>
+      <p class="import-hint">支持 txt/docx/pdf/xlsx/图片(OCR)，或从 Word/PDF 复制文本粘贴到下方：</p>
       <textarea id="pasteArea" class="paste-area" placeholder="粘贴题目文本...&#10;&#10;格式示例：&#10;1. 题目？&#10;A. 选项A&#10;B. 选项B&#10;C. 选项C&#10;D. 选项D&#10;答案：A&#10;解析：说明&#10;&#10;也支持：&#10;一、单选题&#10;1.xxx A)xx B)xx C)xx D)xx 答案:A&#10;二、判断题&#10;1.xxx 答案:对&#10;三、填空题&#10;1.xxx____ 答案:yyy"></textarea>
-      <button class="btn btn-primary" id="parseBtn">🔍 解析文本</button>
+      <div class="import-action-row">
+        <button class="btn btn-primary" id="parseBtn">🔍 解析文本</button>
+        <select id="defaultImportType" class="select" style="max-width:120px" title="默认题型（仅对无法自动识别的题目生效）">
+          <option value="">自动识别</option>
+          <option value="single">默认单选</option>
+          <option value="multiple">默认多选</option>
+          <option value="judge">默认判断</option>
+          <option value="fill">默认填空</option>
+          <option value="qa">默认问答</option>
+        </select>
+      </div>
       <div id="previewArea" style="display:none">
-        <h4 style="margin:12px 0 8px">解析结果 <span id="previewCount" style="color:var(--accent);font-weight:600"></span></h4>
+        <div class="preview-toolbar">
+          <h4 style="margin:0">解析结果 <span id="previewCount" style="color:var(--accent);font-weight:600"></span></h4>
+          <div class="preview-toolbar-btns">
+            <button class="btn" id="selectAllBtn">全选</button>
+            <button class="btn" id="deselectAllBtn">取消全选</button>
+            <button class="btn btn-danger" id="deleteSelectedBtn">🗑️ 删除选中</button>
+            <button class="btn" id="batchTypeBtn">🏷️ 批量改题型</button>
+          </div>
+        </div>
         <div id="previewList" class="preview-list"></div>
-        <button class="btn btn-primary" id="confirmImport">✅ 确认导入</button>
+        <button class="btn btn-primary" id="confirmImport" style="font-size:16px;padding:10px 24px">✅ 确认导入选中题目</button>
       </div>
       </div>
     </div>

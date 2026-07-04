@@ -121,10 +121,16 @@
 
   function onFileParsed(text) {
     var status = document.getElementById('fileStatus');
-    status.className = 'file-status success';
-    status.textContent = '文件读取成功，正在解析...';
-    var questions = parseQuestions(text);
-    showPreview(questions);
+    try {
+      status.className = 'file-status success';
+      status.textContent = '文件读取成功，正在解析...';
+      var questions = parseQuestions(text);
+      showPreview(questions);
+    } catch(e) {
+      status.className = 'file-status error';
+      status.textContent = '解析出错：' + e.message;
+      console.error('Parse error:', e);
+    }
   }
 
   function onFileError(msg) {
@@ -142,6 +148,7 @@
   var TYPE_QA = 'qa';
 
   function detectSectionType(headerText) {
+    if (!headerText) return '';
     var h = headerText.replace(/[\s一二三四五六七八九十、（）()．.]/g, '');
     if (/单选/.test(h)) return TYPE_SINGLE;
     if (/多选/.test(h)) return TYPE_MULTIPLE;
@@ -164,7 +171,7 @@
     var m;
     while ((m = re1.exec(text)) !== null) allBreaks.push({ idx: m.index, cat: 'Unit ' + m[1], typeHint: '' });
     while ((m = re2.exec(text)) !== null) allBreaks.push({ idx: m.index, cat: m[1], typeHint: '' });
-    while ((m = re3.exec(text)) !== null) allBreaks.push({ idx: m.index, cat: m[2], typeHint: detectSectionType(m[2]) });
+    while ((m = re3.exec(text)) !== null) allBreaks.push({ idx: m.index, cat: m[1], typeHint: detectSectionType(m[1]) });
     allBreaks.sort(function(a, b) { return a.idx - b.idx; });
 
     if (allBreaks.length === 0) {
@@ -188,23 +195,85 @@
     return allQuestions;
   }
 
+  function normalizeOptLine(line) {
+    if (!line) return '';
+    line = line.replace(/^[（(]\s*/, '');
+    line = line.replace(/^([Ａ-Ｈａ-ｈA-Za-z])\s*(?:[.、)）.．:：]\s*|[)）]\s*)/, function(m, letter) { return letter.toUpperCase() + '. '; });
+    line = line.replace(/^([A-Da-d])\s*([\u4e00-\u9fff])/, function(m, l, ch) { return l.toUpperCase() + '. ' + ch; });
+    return line;
+  }
+
+  function extractOptContent(line) {
+    if (!line) return '';
+    return line.replace(/^(?:[（(]\s*)?[Ａ-Ｈａ-ｈA-Za-z]\s*(?:[.、)）.．:：]\s*|[)）]\s*)/, '').replace(/^[A-Da-d]\s*([\u4e00-\u9fff])/, '$1').trim();
+  }
+
+  function splitInlineOpts(line) {
+    if (!line) return null;
+    var optRe = /(?:[（(]\s*)?[A-D]\s*(?:[.、)）.．:：]\s*|[)）]\s*)/g;
+    var positions = [], m2;
+    while ((m2 = optRe.exec(line)) !== null) {
+      var ok = m2.index === 0;
+      if (!ok && m2.index > 0) {
+        var prev = line[m2.index - 1];
+        if (prev === ' ' || prev === '\t' || prev === '\u3000' || /[？?。；;，,！!）)]/.test(prev)) ok = true;
+        if (/^[（(]/.test(line.substring(m2.index))) ok = true;
+      }
+      if (ok) positions.push({ idx: m2.index });
+    }
+    if (positions.length < 2) return null;
+    var textBefore = line.substring(0, positions[0].idx).trim();
+    if (textBefore && textBefore.length < 3 && !/^\d/.test(textBefore)) return null;
+    var parts = [];
+    if (textBefore) parts.push(textBefore);
+    for (var i = 0; i < positions.length; i++) {
+      var start = positions[i].idx;
+      var end = (i + 1 < positions.length) ? positions[i + 1].idx : line.length;
+      var optPart = line.substring(start, end).trim();
+      if (optPart) parts.push(optPart);
+    }
+    return parts.length >= 3 ? parts : null;
+  }
+
+  function isOptLine(line) {
+    if (/^[A-Da-d]\s*[.、)）.．:：]\s*/.test(line)) return true;
+    if (/^[A-Da-d]\s*[)）]\s*/.test(line)) return true;
+    if (/^[（(]\s*[A-Da-d]\s*[)）]/.test(line)) return true;
+    if (/^[Ａ-Ｈａ-ｈ]\s*[.、)）.．:：]\s*/.test(line)) return true;
+    if (/^[A-Da-d]\s*[\u4e00-\u9fff]/.test(line)) return true;
+    return false;
+  }
+
   function parseSection(text, defaultCat, typeHint) {
     text = text.replace(/\n{3,}/g, '\n\n');
     var lines = text.split('\n');
     var cleanLines = [];
     for (var i = 0; i < lines.length; i++) { var t = lines[i].trim(); if (t) cleanLines.push(t); }
 
-    var merged = [];
+    var expanded = [];
     for (var i = 0; i < cleanLines.length; i++) {
       var lt = cleanLines[i];
-      if (/^[A-Da-d]$/.test(lt) && i + 1 < cleanLines.length) {
-        var nxt = cleanLines[i + 1];
-        if (!/^[A-Da-d]$/.test(nxt) && !/^[Uu](?:nit)?\s*\d+$/.test(nxt) && !/^\d{1,4}$/.test(nxt)) {
+      var inlineParts = splitInlineOpts(lt);
+      if (inlineParts) { for (var p = 0; p < inlineParts.length; p++) { if (inlineParts[p] && inlineParts[p].trim()) expanded.push(inlineParts[p]); } continue; }
+      expanded.push(lt);
+    }
+
+    var merged = [];
+    for (var i = 0; i < expanded.length; i++) {
+      var lt = expanded[i];
+      if (/^[A-Da-d]$/.test(lt) && i + 1 < expanded.length) {
+        var nxt = expanded[i + 1];
+        if (!/^[A-Da-d]$/.test(nxt) && !/^[Uu](?:nit)?\s*\d+$/.test(nxt) && !/^\d{1,4}$/.test(nxt) && !/^[（(]\s*[A-Da-d]/.test(nxt)) {
           merged.push(lt + '. ' + nxt); i++; continue;
         }
       }
       var stuck = lt.match(/^([A-Da-d])(True|False|正确|错误|对|错|Yes|No)$/i);
       if (stuck) { merged.push(stuck[1] + '. ' + stuck[2]); continue; }
+      var fwStuck = lt.match(/^[（(]\s*([A-Da-d])\s*[)）]\s*(.*)/);
+      if (fwStuck && !fwStuck[2].trim() && i + 1 < expanded.length) {
+        var nxtLine = expanded[i + 1];
+        if (!/^[（(]\s*[A-Da-d]/.test(nxtLine) && !/^\d{1,4}/.test(nxtLine)) { merged.push(fwStuck[1] + '. ' + nxtLine); i++; continue; }
+      }
       merged.push(lt);
     }
 
@@ -218,6 +287,7 @@
         continue;
       }
       var isQ = /^\d{1,4}\s*[.、)）.．\]:：]/.test(t) || /^\d{1,4}\.\s*\S/.test(t) || /^\d{1,4}$/.test(t);
+      if (/^第\s*\d+\s*章/.test(t)) continue;
       if (isQ && current.length) { blocks.push({ text: current.join('\n'), typeHint: currentType }); current = []; }
       current.push(t);
     }
@@ -251,26 +321,51 @@
       if (/^(?:解析|说明|分析)[：:]/.test(line)) { inExp=true; inAns=false; expLines.push(line.replace(/^[^：:]+[：:]\s*/, '')); continue; }
       if (inExp) { expLines.push(line); continue; }
       if (/^(?:答案|参考答案|标准答案|正确答案|Answer|正确选项)[：:]\s*/i.test(line)) { inAns=true; inExp=false; var ac=line.replace(/^(?:答案|参考答案|标准答案|正确答案|Answer|正确选项)[：:]\s*/i,'').trim(); if(ac)ansBuf.push(ac); continue; }
-      if (inAns) { if(/^(?:解析|说明|分析)[：:]/.test(line)||/^[A-Da-d]\s*[.、)）.．]/.test(line)){inAns=false;}else{ansBuf.push(line);continue;} }
+      if (inAns) {
+        if (/^(?:解析|说明|分析)[：:]/.test(line) || isOptLine(line) || /^\d{1,4}\s*[.、)）.．\]:：]/.test(line)) { inAns = false; }
+        else { ansBuf.push(line); continue; }
+      }
 
-      if (/^[A-Da-d]\s*[.、)）.．:：]\s*/.test(line) || /^[A-Da-d]\s*[)）]\s*/.test(line)) {
-        var optContent = line.replace(/^[A-Da-d]\s*[.、)）.．:：]\s*/, '').trim();
-        if (optContent.length > 200 && !/^(True|False|正确|错误|对|错)/i.test(optContent)) { qLines.push(line); }
-        else { optLines.push(line); }
+      if (isOptLine(line)) {
+        var nLine = normalizeOptLine(line);
+        var letterMatch = nLine.match(/^([A-H])\s*[.、)）.．:：]\s*/);
+        if (letterMatch) {
+          var optContent = nLine.replace(/^[A-H]\s*[.、)）.．:：]\s*/, '').trim();
+          if (optContent.length > 200 && !/^(True|False|正确|错误|对|错)/i.test(optContent)) { qLines.push(line); }
+          else { optLines.push(nLine); }
+          continue;
+        }
+        optLines.push(nLine);
         continue;
       }
 
       if (!inAns && !inExp) {
         var cleanAns = line.replace(/[.、)）.．\s]+$/, '').trim();
-        if (/^[A-Da-d]{1,4}$/.test(cleanAns)) { ansBuf.push(cleanAns); continue; }
+        if (/^[A-Da-d]{1,5}$/.test(cleanAns)) { ansBuf.push(cleanAns); continue; }
         if (/^(对|正确|√|错|错误|×)$/.test(cleanAns)) { ansBuf.push(cleanAns); continue; }
       }
 
-      var inlineAns = line.match(/\s+答案[：:]\s*([A-Da-d]{1,4}|对|正确|√|错|错误|×|.+)/);
-      if (inlineAns) {
-        var before = line.substring(0, line.indexOf(inlineAns[0])).trim();
-        if (before) qLines.push(before);
-        ansBuf.push(inlineAns[1].trim());
+      var ansKeywordIdx = line.search(/(?:答案|Answer)[：:]/i);
+      var hasInlineAns = ansKeywordIdx > 0;
+      var lineBeforeAns = hasInlineAns ? line.substring(0, ansKeywordIdx).trim() : line;
+      var ansVal = hasInlineAns ? line.substring(ansKeywordIdx).replace(/^(?:答案|Answer)[：:]\s*/i, '').trim() : '';
+
+      var inlineSplit = splitInlineOpts(lineBeforeAns);
+      if (inlineSplit && inlineSplit.length >= 2) {
+        var questionPart = '', foundOpts = false;
+        for (var si = 0; si < inlineSplit.length; si++) {
+          if (isOptLine(inlineSplit[si])) { optLines.push(normalizeOptLine(inlineSplit[si])); foundOpts = true; }
+          else if (!foundOpts) { questionPart = inlineSplit[si]; }
+          else { optLines.push(normalizeOptLine(inlineSplit[si])); }
+        }
+        if (questionPart) qLines.push(questionPart);
+        if (ansVal) ansBuf.push(ansVal);
+        continue;
+      }
+
+      if (hasInlineAns) {
+        if (lineBeforeAns) qLines.push(lineBeforeAns);
+        if (ansVal) ansBuf.push(ansVal);
         continue;
       }
 
@@ -284,9 +379,7 @@
     q.question = q.question.trim();
     if (category) q.category = category;
 
-    if (optLines.length) {
-      q.options = optLines.map(function(l) { return l.replace(/^[A-Da-d]\s*[.、)）.．:：]\s*/, '').trim(); });
-    }
+    q.options = optLines.map(function(l) { return extractOptContent(l); });
     q.explanation = expLines.join('\n').trim();
     q.answer = answerText;
 
@@ -311,9 +404,7 @@
     } else if (typeHint === TYPE_SINGLE) {
       if (hasOpts) {
         q.type = TYPE_SINGLE;
-        q.options = optLines.map(function(l) { return l.replace(/^[A-Da-d]\s*[.、)）.．:：]\s*/, '').trim(); });
-        if (ans.length === 1) q.answer = ans.charCodeAt(0) - 65;
-        else if (ans.length > 1) q.answer = ans.charCodeAt(0) - 65;
+        if (ans.length >= 1) q.answer = ans.charCodeAt(0) - 65;
         else q.answer = '';
       } else {
         q.type = TYPE_QA;
@@ -322,7 +413,6 @@
     } else if (typeHint === TYPE_MULTIPLE) {
       if (hasOpts) {
         q.type = TYPE_MULTIPLE;
-        q.options = optLines.map(function(l) { return l.replace(/^[A-Da-d]\s*[.、)）.．:：]\s*/, '').trim(); });
         if (ans.length >= 2) q.answer = ans.split('').map(function(c) { return c.charCodeAt(0) - 65; });
         else if (ans.length === 1) q.answer = [ans.charCodeAt(0) - 65];
         else q.answer = [];

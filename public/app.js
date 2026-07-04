@@ -622,6 +622,21 @@
       var tForQCheck = t.replace(/^\[IMG:img_\d+\]\s*/, '');
       var isQ = isStandaloneQNum || (/^\d{1,4}\s*[.、)）.．\]:：]/.test(tForQCheck) && !/^\d+\.\d+/.test(tForQCheck)) || (/^\d{1,4}\.\s*\S/.test(tForQCheck) && !/^\d+\.\d+/.test(tForQCheck));
       if (/^第\s*\d+\s*章/.test(t)) continue;
+
+      var isSectionTitle = false;
+      if (current.length > 0 && t.length < 80 && t.length > 3 && !/^\d/.test(t) && !/^[A-Da-d]\s*[.．:：]/.test(t) && !/^[（(]\s*[A-Da-d]/.test(t)) {
+        if (i + 1 < merged.length) {
+          var after = merged[i + 1];
+          if (/^[A-Da-d]\s*[.．:：]\s*\S/.test(after) && after.length > 100) isSectionTitle = true;
+          if (/^[A-Da-d]$/.test(after) && i + 2 < merged.length && merged[i + 2].length > 80) isSectionTitle = true;
+        }
+      }
+      if (isSectionTitle) {
+        if (current.length) { blocks.push({ text: current.join('\n'), typeHint: currentType }); current = []; }
+        blocks.push({ text: t, typeHint: currentType });
+        continue;
+      }
+
       if (isQ && current.length) { blocks.push({ text: current.join('\n'), typeHint: currentType }); current = []; }
       current.push(t);
     }
@@ -637,18 +652,35 @@
     for (var i = 0; i < questions.length; i++) {
       if (questions[i].type === TYPE_QA && questions[i].options.length === 0 && !/_{2,}/.test(questions[i].question)) {
         qaNoOptCount++;
-        if (!/[?？]/.test(questions[i].question) && questions[i].question.length > 15) judgeCandidateCount++;
+        var hasChinese = /[\u4e00-\u9fff]/.test(questions[i].question);
+        if (!hasChinese && !/[?？]/.test(questions[i].question) && questions[i].question.length > 15) judgeCandidateCount++;
       }
     }
-    if (qaNoOptCount >= 3 && judgeCandidateCount / qaNoOptCount > 0.6) {
+    if (qaNoOptCount >= 3 && judgeCandidateCount / qaNoOptCount > 0.5) {
       for (var i = 0; i < questions.length; i++) {
-        if (questions[i].type === TYPE_QA && questions[i].options.length === 0 && !/_{2,}/.test(questions[i].question) && !/[?？]/.test(questions[i].question) && questions[i].question.length > 15) {
+        var hasCh = /[\u4e00-\u9fff]/.test(questions[i].question);
+        if (questions[i].type === TYPE_QA && questions[i].options.length === 0 && !/_{2,}/.test(questions[i].question) && !/[?？]/.test(questions[i].question) && questions[i].question.length > 15 && !hasCh) {
           questions[i].type = TYPE_JUDGE;
           questions[i].options = ['对', '错'];
           questions[i].answer = '';
         }
       }
     }
+
+    questions = questions.filter(function(q) {
+      if (q.type === TYPE_QA && q.options.length === 0 && !/_{2,}/.test(q.question)) {
+        if (q.question.length > 300) return false;
+        if (/^[A-Da-d]\.\s/.test(q.question) && q.question.length > 80) return false;
+        if (q.question.length <= 10 && !/^\d/.test(q.question)) return false;
+      }
+      if (q.type === TYPE_QA && q.options.length === 0 && q.question.length <= 5) return false;
+      if (q.type === TYPE_JUDGE && q.options.length === 2) {
+        if (/^[A-Da-d]\.\s/.test(q.question) && q.question.length > 80) return false;
+        var hasChJ = /[\u4e00-\u9fff]{3,}/.test(q.question);
+        if (!hasChJ && q.question.length < 30 && !/\d/.test(q.question) && !/[?？]/.test(q.question) && !/_{2,}/.test(q.question) && !/[.。]$/.test(q.question.trim())) return false;
+      }
+      return true;
+    });
 
     return questions;
   }
@@ -669,7 +701,8 @@
       if (isFigureLabel(line)) continue;
       if (isGraphArtifact(line) && !prevWasOpt) {
         var looksLikeQNum = /^\d{1,4}\s*[.、)）.．\]:：]/.test(line) && !/^\d+\.\d+/.test(line);
-        if (!looksLikeQNum) continue;
+        var isStandaloneNum = /^\d{1,3}$/.test(line);
+        if (!looksLikeQNum && !isStandaloneNum) continue;
       }
       prevWasOpt = isOptLine(line);
 
@@ -690,7 +723,7 @@
         var letterMatch = nLine.match(/^([A-H])\s*[.、)）.．:：]\s*/);
         if (letterMatch) {
           var optContent = nLine.replace(/^[A-H]\s*[.、)）.．:：]\s*/, '').trim();
-          if (optContent.length > 200 && !/^(True|False|正确|错误|对|错)/i.test(optContent)) { qLines.push(line); }
+          if (optContent.length > 120 && !/^(True|False|正确|错误|对|错)/i.test(optContent)) { qLines.push(line); }
           else { optLines.push(nLine); }
           continue;
         }
@@ -732,11 +765,34 @@
     }
 
     var answerText = ansBuf.join(' ').trim();
+
+    if (optLines.length > 0) {
+      var avgOptLen = 0;
+      for (var i = 0; i < optLines.length; i++) avgOptLen += extractOptContent(optLines[i]).length;
+      avgOptLen /= optLines.length;
+      if (avgOptLen > 80) {
+        for (var i = 0; i < optLines.length; i++) qLines.push(optLines[i]);
+        optLines = [];
+      }
+    }
+
     var first = qLines[0] || '';
     q.question = first.replace(/^\d{1,4}\s*[.、)）.．\]:：]\s*/, '').replace(/^\d{1,3}\s+/, '').replace(/^\d{1,3}$/, '').trim();
     if (qLines.length > 1) { for (var i = 1; i < qLines.length; i++) q.question += '\n' + qLines[i]; }
     q.question = q.question.trim();
     if (category) q.category = category;
+
+    var qParts = q.question.split('\n');
+    if (qParts.length > 1) {
+      var lastPart = qParts[qParts.length - 1].trim();
+      if (lastPart.length > 0 && lastPart.length < 80 && !/[?？]/.test(lastPart) && !/_{2,}/.test(lastPart) && !/^[A-Da-d]/.test(lastPart) && !/^\d/.test(lastPart)) {
+        var prevPart = qParts[qParts.length - 2].trim();
+        if (/[.!?。！？)]\s*$/.test(prevPart) || /_{2,}\s*$/.test(prevPart)) {
+          qParts.pop();
+          q.question = qParts.join('\n').trim();
+        }
+      }
+    }
 
     q.options = optLines.map(function(l) { return extractOptContent(l); });
     q.explanation = expLines.join('\n').trim();

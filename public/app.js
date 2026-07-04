@@ -991,27 +991,32 @@
     var cbs = list.querySelectorAll('.preview-check');
     var hasAnyChecked = false;
     for (var ci = 0; ci < cbs.length; ci++) { if (cbs[ci].checked) { hasAnyChecked = true; break; } }
-    var valid = [];
+    var selected = [];
     if (hasAnyChecked) {
       for (var ci = 0; ci < cbs.length; ci++) {
         var idx = parseInt(cbs[ci].getAttribute('data-idx'));
-        if (cbs[ci].checked && state.pendingImport[idx]) valid.push(state.pendingImport[idx]);
+        if (cbs[ci].checked && state.pendingImport[idx]) selected.push(state.pendingImport[idx]);
       }
     } else {
       for (var i = 0; i < state.pendingImport.length; i++) {
-        if (state.pendingImport[i]._valid) valid.push(state.pendingImport[i]);
+        selected.push(state.pendingImport[i]);
       }
     }
-    if (!valid.length) { alert('没有有效题目'); return; }
+    if (!selected.length) { alert('没有题目可导入'); return; }
 
-    api('POST', '/questions', valid).then(function() {
+    for (var i = 0; i < selected.length; i++) {
+      selected[i].id = 'q_' + Date.now() + '_' + i;
+      delete selected[i]._valid;
+    }
+
+    api('POST', '/questions', selected).then(function() {
       state.pendingImport = null;
       document.getElementById('previewArea').style.display = 'none';
       document.getElementById('fileStatus').className = 'file-status hidden';
       document.getElementById('fileInput').value = '';
       document.getElementById('pasteArea').value = '';
       loadAllData().then(function() {
-        showToast('成功导入 ' + valid.length + ' 道题目！', 'success');
+        showToast('成功导入 ' + selected.length + ' 道题目！', 'success');
       });
     }).catch(function() { showToast('导入失败，请重试', 'error'); });
   }

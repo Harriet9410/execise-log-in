@@ -72,11 +72,13 @@ function addQuestions(userId, questions) {
       existing.category = q.category || '';
       existing.difficulty = q.difficulty || 1;
       existing.explanation = q.explanation || '';
+      if (q.image !== undefined) existing.image = q.image;
     } else {
       db.questions.push({
         user_id: userId, qid: q.id, type: q.type, question: q.question,
         options: q.options || [], answer: q.answer, subject: q.subject || '',
-        category: q.category || '', difficulty: q.difficulty || 1, explanation: q.explanation || ''
+        category: q.category || '', difficulty: q.difficulty || 1, explanation: q.explanation || '',
+        image: q.image || ''
       });
     }
   }
@@ -87,14 +89,14 @@ function getQuestions(userId) {
   return db.questions.filter(q => q.user_id === userId).map(q => ({
     id: q.qid, type: q.type, question: q.question, options: q.options || [],
     answer: q.answer, subject: q.subject || '', category: q.category || '',
-    difficulty: q.difficulty || 1, explanation: q.explanation || ''
+    difficulty: q.difficulty || 1, explanation: q.explanation || '', image: q.image || ''
   }));
 }
 
 function updateQuestion(userId, qid, fields) {
   const q = db.questions.find(x => x.user_id === userId && x.qid === qid);
   if (!q) return;
-  const allowed = ['type', 'question', 'options', 'answer', 'subject', 'category', 'difficulty', 'explanation'];
+  const allowed = ['type', 'question', 'options', 'answer', 'subject', 'category', 'difficulty', 'explanation', 'image'];
   for (const k of allowed) {
     if (fields[k] !== undefined) q[k] = fields[k];
   }

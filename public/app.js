@@ -135,40 +135,60 @@
 
   // ==================== TEXT PARSER ====================
 
+  var TYPE_SINGLE = 'single';
+  var TYPE_MULTIPLE = 'multiple';
+  var TYPE_JUDGE = 'judge';
+  var TYPE_FILL = 'fill';
+  var TYPE_QA = 'qa';
+
+  function detectSectionType(headerText) {
+    var h = headerText.replace(/[\s一二三四五六七八九十、（）()．.]/g, '');
+    if (/单选/.test(h)) return TYPE_SINGLE;
+    if (/多选/.test(h)) return TYPE_MULTIPLE;
+    if (/判断/.test(h)) return TYPE_JUDGE;
+    if (/填空/.test(h)) return TYPE_FILL;
+    if (/问答|简答|论述|计算|编程/.test(h)) return TYPE_QA;
+    return '';
+  }
+
   function parseQuestions(text) {
     if (!text || !text.trim()) return [];
     text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
     var sections = [];
     var allBreaks = [];
+
     var re1 = /(?:^|\n)\s*[Uu](?:nit)?\s*(\d+)\s*[\n\r]/g;
     var re2 = /(?:^|\n)\s*(视听说|听力|阅读|写作|翻译|口语)\s*[\n\r]/g;
+    var re3 = /(?:^|\n)\s*[一二三四五六七八九十]+[、.．]\s*(单选题|多选题|判断题|填空题|问答题|简答题|论述题|计算题|编程题|选择题|综合题)[^\n]*[\n\r]/g;
     var m;
-    while ((m = re1.exec(text)) !== null) allBreaks.push({ idx: m.index, cat: 'Unit ' + m[1] });
-    while ((m = re2.exec(text)) !== null) allBreaks.push({ idx: m.index, cat: m[1] });
+    while ((m = re1.exec(text)) !== null) allBreaks.push({ idx: m.index, cat: 'Unit ' + m[1], typeHint: '' });
+    while ((m = re2.exec(text)) !== null) allBreaks.push({ idx: m.index, cat: m[1], typeHint: '' });
+    while ((m = re3.exec(text)) !== null) allBreaks.push({ idx: m.index, cat: m[2], typeHint: detectSectionType(m[2]) });
     allBreaks.sort(function(a, b) { return a.idx - b.idx; });
 
     if (allBreaks.length === 0) {
-      sections.push({ cat: '', text: text });
+      sections.push({ cat: '', typeHint: '', text: text });
     } else {
-      if (allBreaks[0].idx > 0) sections.push({ cat: '', text: text.substring(0, allBreaks[0].idx) });
+      if (allBreaks[0].idx > 0) sections.push({ cat: '', typeHint: '', text: text.substring(0, allBreaks[0].idx) });
       for (var i = 0; i < allBreaks.length; i++) {
         var start = allBreaks[i].idx;
         var end = (i + 1 < allBreaks.length) ? allBreaks[i + 1].idx : text.length;
-        sections.push({ cat: allBreaks[i].cat, text: text.substring(start, end) });
+        sections.push({ cat: allBreaks[i].cat, typeHint: allBreaks[i].typeHint, text: text.substring(start, end) });
       }
     }
 
     var allQuestions = [];
     for (var s = 0; s < sections.length; s++) {
       var secText = sections[s].text.replace(/^\s*[Uu](?:nit)?\s*\d+\s*\n/, '').replace(/^\s*(视听说|听力|阅读|写作|翻译|口语)\s*\n/, '');
-      var qs = parseSection(secText, sections[s].cat);
+      secText = secText.replace(/^\s*[一二三四五六七八九十]+[、.．]\s*(?:单选题|多选题|判断题|填空题|问答题|简答题|论述题|计算题|编程题|选择题|综合题)[^\n]*\n/, '');
+      var qs = parseSection(secText, sections[s].cat, sections[s].typeHint);
       for (var i = 0; i < qs.length; i++) allQuestions.push(qs[i]);
     }
     return allQuestions;
   }
 
-  function parseSection(text, defaultCat) {
+  function parseSection(text, defaultCat, typeHint) {
     text = text.replace(/\n{3,}/g, '\n\n');
     var lines = text.split('\n');
     var cleanLines = [];
@@ -179,7 +199,7 @@
       var lt = cleanLines[i];
       if (/^[A-Da-d]$/.test(lt) && i + 1 < cleanLines.length) {
         var nxt = cleanLines[i + 1];
-        if (!/^[A-Da-d]$/.test(nxt) && !/^[Uu](?:nit)?\s*\d+$/.test(nxt) && !/^\d{1,3}$/.test(nxt)) {
+        if (!/^[A-Da-d]$/.test(nxt) && !/^[Uu](?:nit)?\s*\d+$/.test(nxt) && !/^\d{1,4}$/.test(nxt)) {
           merged.push(lt + '. ' + nxt); i++; continue;
         }
       }
@@ -188,54 +208,70 @@
       merged.push(lt);
     }
 
-    var blocks = [], current = [];
+    var blocks = [], current = [], currentType = typeHint || '';
     for (var i = 0; i < merged.length; i++) {
       var t = merged[i];
-      var isQ = /^\d{1,3}\s*[.、)）.．\]:：]/.test(t) || /^\d{1,3}\.\s*\S/.test(t) || /^\d{1,3}$/.test(t);
-      if (isQ && current.length) { blocks.push(current.join('\n')); current = []; }
+      var headerMatch = t.match(/^[一二三四五六七八九十]+[、.．]\s*(单选题|多选题|判断题|填空题|问答题|简答题|论述题|计算题|编程题|选择题|综合题)/);
+      if (headerMatch) {
+        if (current.length) { blocks.push({ text: current.join('\n'), typeHint: currentType }); current = []; }
+        currentType = detectSectionType(headerMatch[1]);
+        continue;
+      }
+      var isQ = /^\d{1,4}\s*[.、)）.．\]:：]/.test(t) || /^\d{1,4}\.\s*\S/.test(t) || /^\d{1,4}$/.test(t);
+      if (isQ && current.length) { blocks.push({ text: current.join('\n'), typeHint: currentType }); current = []; }
       current.push(t);
     }
-    if (current.length) blocks.push(current.join('\n'));
+    if (current.length) blocks.push({ text: current.join('\n'), typeHint: currentType });
 
     var questions = [];
     for (var b = 0; b < blocks.length; b++) {
-      var q = parseBlock(blocks[b], questions.length, defaultCat);
+      var q = parseBlock(blocks[b].text, questions.length, defaultCat, blocks[b].typeHint);
       if (q) questions.push(q);
     }
     return questions;
   }
 
-  function parseBlock(block, idx, defaultCat) {
+  function parseBlock(block, idx, defaultCat, typeHint) {
     var lines = block.split('\n');
     var filtered = [];
     for (var i = 0; i < lines.length; i++) { if (lines[i].trim()) filtered.push(lines[i].trim()); }
     if (!filtered.length) return null;
 
-    var q = { id:'imp_'+Date.now()+'_'+idx, type:'qa', category: defaultCat||'', difficulty:1, question:'', options:[], answer:'', explanation:'', subject:'' };
+    var q = { id:'imp_'+Date.now()+'_'+idx, type: typeHint || TYPE_QA, category: defaultCat||'', difficulty:1, question:'', options:[], answer:'', explanation:'', subject:'', image:'' };
     var qLines = [], optLines = [], ansBuf = [], expLines = [];
     var inAns = false, inExp = false, category = defaultCat || '';
 
     for (var i = 0; i < filtered.length; i++) {
       var line = filtered[i];
-      var cm = line.match(/^(?:分类|章节|知识点)[：:]\s*(.+)/);
+
+      var cm = line.match(/^(?:分类|章节|知识点|题型)[：:]\s*(.+)/);
       if (cm) { category = cm[1].trim(); continue; }
+      if (/^科目[：:]\s*/.test(line)) { q.subject = line.replace(/^科目[：:]\s*/, '').trim(); continue; }
       if (/^难度[：:]\s*/.test(line)) { var d = line.replace(/^难度[：:]\s*/, '').trim(); q.difficulty = /难|3/i.test(d)?3:/中|2/i.test(d)?2:1; continue; }
       if (/^(?:解析|说明|分析)[：:]/.test(line)) { inExp=true; inAns=false; expLines.push(line.replace(/^[^：:]+[：:]\s*/, '')); continue; }
       if (inExp) { expLines.push(line); continue; }
-      if (/^(?:答案|参考答案|标准答案|正确答案|Answer)[：:]\s*/i.test(line)) { inAns=true; inExp=false; var ac=line.replace(/^(?:答案|参考答案|标准答案|正确答案|Answer)[：:]\s*/i,'').trim(); if(ac)ansBuf.push(ac); continue; }
+      if (/^(?:答案|参考答案|标准答案|正确答案|Answer|正确选项)[：:]\s*/i.test(line)) { inAns=true; inExp=false; var ac=line.replace(/^(?:答案|参考答案|标准答案|正确答案|Answer|正确选项)[：:]\s*/i,'').trim(); if(ac)ansBuf.push(ac); continue; }
       if (inAns) { if(/^(?:解析|说明|分析)[：:]/.test(line)||/^[A-Da-d]\s*[.、)）.．]/.test(line)){inAns=false;}else{ansBuf.push(line);continue;} }
 
-      if (/^[A-Da-d]\s*[.、)）.．]\s*/.test(line)) {
-        var optContent = line.replace(/^[A-Da-d]\s*[.、)）.．]\s*/, '').trim();
-        if (optContent.length > 200 && !/^(True|False|正确|错误)/i.test(optContent)) { qLines.push(line); }
+      if (/^[A-Da-d]\s*[.、)）.．:：]\s*/.test(line) || /^[A-Da-d]\s*[)）]\s*/.test(line)) {
+        var optContent = line.replace(/^[A-Da-d]\s*[.、)）.．:：]\s*/, '').trim();
+        if (optContent.length > 200 && !/^(True|False|正确|错误|对|错)/i.test(optContent)) { qLines.push(line); }
         else { optLines.push(line); }
         continue;
       }
 
-      if (!inAns && !inExp && optLines.length > 0) {
+      if (!inAns && !inExp) {
         var cleanAns = line.replace(/[.、)）.．\s]+$/, '').trim();
         if (/^[A-Da-d]{1,4}$/.test(cleanAns)) { ansBuf.push(cleanAns); continue; }
         if (/^(对|正确|√|错|错误|×)$/.test(cleanAns)) { ansBuf.push(cleanAns); continue; }
+      }
+
+      var inlineAns = line.match(/\s+答案[：:]\s*([A-Da-d]{1,4}|对|正确|√|错|错误|×|.+)/);
+      if (inlineAns) {
+        var before = line.substring(0, line.indexOf(inlineAns[0])).trim();
+        if (before) qLines.push(before);
+        ansBuf.push(inlineAns[1].trim());
+        continue;
       }
 
       qLines.push(line);
@@ -243,44 +279,92 @@
 
     var answerText = ansBuf.join(' ').trim();
     var first = qLines[0] || '';
-    q.question = first.replace(/^\d{1,3}\s*[.、)）.．\]:：]\s*/, '').trim();
+    q.question = first.replace(/^\d{1,4}\s*[.、)）.．\]:：]\s*/, '').trim();
     if (qLines.length > 1) { for (var i = 1; i < qLines.length; i++) q.question += '\n' + qLines[i]; }
     q.question = q.question.trim();
     if (category) q.category = category;
 
     if (optLines.length) {
-      q.options = optLines.map(function(l) { return l.replace(/^[A-Da-d]\s*[.、)）.．]\s*/, '').trim(); });
+      q.options = optLines.map(function(l) { return l.replace(/^[A-Da-d]\s*[.、)）.．:：]\s*/, '').trim(); });
     }
     q.explanation = expLines.join('\n').trim();
     q.answer = answerText;
 
-    if (optLines.length > 0) {
-      var ans = answerText.toUpperCase().replace(/[^A-Z]/g, '');
+    var hasBlank = /_{2,}|【\s*】|（\s*）|\(\s*\)/.test(q.question);
+    var hasOpts = optLines.length > 0;
+    var ans = answerText.toUpperCase().replace(/[^A-Z]/g, '');
+
+    if (typeHint === TYPE_FILL) {
+      q.type = TYPE_FILL;
+      q.answer = answerText;
+      q.options = [];
+    } else if (typeHint === TYPE_JUDGE) {
+      q.type = TYPE_JUDGE;
+      if (/^(对|正确|√|是|T|True|✔|✓)$/i.test(answerText.trim())) q.answer = true;
+      else if (/^(错|错误|×|否|F|False|✘|✗)$/i.test(answerText.trim())) q.answer = false;
+      else q.answer = true;
+      q.options = ['对', '错'];
+    } else if (typeHint === TYPE_QA) {
+      q.type = TYPE_QA;
+      q.answer = answerText;
+      q.options = [];
+    } else if (typeHint === TYPE_SINGLE) {
+      if (hasOpts) {
+        q.type = TYPE_SINGLE;
+        q.options = optLines.map(function(l) { return l.replace(/^[A-Da-d]\s*[.、)）.．:：]\s*/, '').trim(); });
+        if (ans.length === 1) q.answer = ans.charCodeAt(0) - 65;
+        else if (ans.length > 1) q.answer = ans.charCodeAt(0) - 65;
+        else q.answer = '';
+      } else {
+        q.type = TYPE_QA;
+        q.answer = answerText;
+      }
+    } else if (typeHint === TYPE_MULTIPLE) {
+      if (hasOpts) {
+        q.type = TYPE_MULTIPLE;
+        q.options = optLines.map(function(l) { return l.replace(/^[A-Da-d]\s*[.、)）.．:：]\s*/, '').trim(); });
+        if (ans.length >= 2) q.answer = ans.split('').map(function(c) { return c.charCodeAt(0) - 65; });
+        else if (ans.length === 1) q.answer = [ans.charCodeAt(0) - 65];
+        else q.answer = [];
+      } else {
+        q.type = TYPE_QA;
+        q.answer = answerText;
+      }
+    } else if (hasBlank && !hasOpts) {
+      q.type = TYPE_FILL;
+      q.answer = answerText;
+    } else if (hasOpts) {
       var optJoined = q.options.join(' ').toLowerCase();
       if (q.options.length === 2 && /true/.test(optJoined) && /false/.test(optJoined)) {
-        q.type = 'judge'; q.answer = /true/i.test(answerText) ? true : (/false/i.test(answerText) ? false : '');
+        q.type = TYPE_JUDGE; q.answer = /true/i.test(answerText) ? true : (/false/i.test(answerText) ? false : '');
+      } else if (q.options.length === 2 && /^(对|正确|是|错|错误|否)$/.test(q.options[0]) && /^(对|正确|是|错|错误|否)$/.test(q.options[1])) {
+        q.type = TYPE_JUDGE;
+        if (/^(对|正确|是|√)$/i.test(answerText)) q.answer = /^(对|正确|是|√)$/i.test(q.options[0]) ? 0 : 1;
+        else if (/^(错|错误|否|×)$/i.test(answerText)) q.answer = /^(错|错误|否|×)$/i.test(q.options[0]) ? 0 : 1;
+        else q.answer = '';
       } else if (ans.length > 1) {
-        q.type = 'multiple'; q.answer = ans.split('').map(function(c){return c.charCodeAt(0)-65;});
+        q.type = TYPE_MULTIPLE; q.answer = ans.split('').map(function(c){return c.charCodeAt(0)-65;});
       } else if (ans.length === 1) {
-        q.type = 'single'; q.answer = ans.charCodeAt(0) - 65;
+        q.type = TYPE_SINGLE; q.answer = ans.charCodeAt(0) - 65;
       } else {
-        q.type = 'single'; q.answer = '';
+        q.type = TYPE_SINGLE; q.answer = '';
       }
     } else if (/^(对|正确|√|是|T|True|✔|✓)$/i.test(answerText.trim()) || /^(错|错误|×|否|F|False|✘|✗)$/i.test(answerText.trim())) {
-      q.type = 'judge'; q.answer = /^(对|正确|√|是|T|True|✔|✓)$/i.test(answerText.trim());
-    } else if (/_{2,}|【\s*】|（\s*）|\(\s*\)/.test(q.question)) {
-      q.type = 'fill'; q.answer = answerText;
+      q.type = TYPE_JUDGE; q.answer = /^(对|正确|√|是|T|True|✔|✓)$/i.test(answerText.trim());
+    } else if (hasBlank) {
+      q.type = TYPE_FILL; q.answer = answerText;
     } else {
-      q.type = 'qa'; q.answer = answerText;
+      q.type = TYPE_QA; q.answer = answerText;
     }
 
     if (!q.question.trim()) {
-      var numMatch = (qLines[0]||'').match(/^(\d{1,3})/);
+      var numMatch = (qLines[0]||'').match(/^(\d{1,4})/);
       q.question = numMatch ? '第' + numMatch[1] + '题' : '（题目文本缺失）';
     }
 
     q._valid = true;
-    if ((q.type === 'single' || q.type === 'multiple') && (!q.options || q.options.length < 2)) q._valid = false;
+    if (q.type === TYPE_SINGLE && (!q.options || q.options.length < 2)) q._valid = false;
+    if (q.type === TYPE_MULTIPLE && (!q.options || q.options.length < 2)) q._valid = false;
 
     return q;
   }
@@ -550,6 +634,7 @@
     if (!hasAnswer(q)) h += '<span class="q-tag no-answer">⚠ 无答案</span>';
     h += '</div>';
     h += '<div class="q-number">第 ' + (state.current+1) + ' / ' + state.indices.length + ' 题</div>';
+    if (q.image) h += '<div class="q-image"><img src="' + q.image + '" style="max-width:100%;border-radius:8px;cursor:pointer" onclick="window.open(this.src)" title="点击放大"></div>';
     var qHtml = q.question && (q.question.indexOf('<p>') !== -1 || q.question.indexOf('<img') !== -1) ? q.question : escapeHtml(q.question);
     h += '<div class="q-question">' + qHtml + '</div>';
 
@@ -588,6 +673,7 @@
     h += '<button class="btn" id="editAnswerBtn">✏️ 编辑答案</button>';
     h += '<button class="btn" id="editCatBtn">🏷️ 编辑分类</button>';
     h += '<button class="btn" id="editSubjBtn">📚 编辑科目</button>';
+    h += '<button class="btn" id="editImageBtn">🖼️ 编辑图片</button>';
     h += '<button class="btn btn-danger" id="deleteBtn">🗑️ 删除此题</button>';
     h += '<button class="btn btn-danger" id="batchDeleteBtn">🗑️ 批量删除</button>';
     h += '<button class="btn" id="shareBtn">📤 分享</button>';
@@ -686,10 +772,12 @@
     if (editCatBtn) editCatBtn.onclick = function() { openCategoryEditor(q); };
     var editSubjBtn = document.getElementById('editSubjBtn');
     if (editSubjBtn) editSubjBtn.onclick = function() { openSubjectEditor(q); };
+    var editImageBtn = document.getElementById('editImageBtn');
+    if (editImageBtn) editImageBtn.onclick = function() { openImageEditor(q); };
     var deleteBtn = document.getElementById('deleteBtn');
     if (deleteBtn) deleteBtn.onclick = function() {
       if (!confirm('确定删除此题吗？此操作不可撤销！')) return;
-      api('DELETE', '/questions', [q.id]).then(function() {
+      api('DELETE', '/questions', { qids: [q.id] }).then(function() {
         loadAllData().then(function() { showToast('已删除', 'success'); });
       });
     };
@@ -963,12 +1051,89 @@
       }
       if (!count) { alert('请选择要删除的题目'); return; }
       if (!confirm('确定删除 ' + count + ' 道题吗？此操作不可撤销！')) return;
-      api('DELETE', '/questions', selectedIds).then(function() {
+      api('DELETE', '/questions', { qids: selectedIds }).then(function() {
         div.remove();
         loadAllData().then(function() { showToast('已删除 ' + count + ' 道题', 'success'); });
       });
     };
     document.getElementById('cancelDelBtn').onclick = function() { div.remove(); };
+  }
+
+  function readImageAsBase64(file, callback) {
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      var img = new Image();
+      img.onload = function() {
+        var canvas = document.createElement('canvas');
+        var maxW = 800, maxH = 800;
+        var w = img.width, h = img.height;
+        if (w > maxW || h > maxH) {
+          if (w / maxW > h / maxH) { h = Math.round(h * maxW / w); w = maxW; }
+          else { w = Math.round(w * maxH / h); h = maxH; }
+        }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        callback(canvas.toDataURL('image/jpeg', 0.7));
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function openImageEditor(q) {
+    var card = document.querySelector('.q-card');
+    if (!card) return;
+    var existing = document.getElementById('imageEditor');
+    if (existing) existing.remove();
+
+    var div = document.createElement('div');
+    div.id = 'imageEditor';
+    div.className = 'answer-editor';
+
+    var html = '<h4>🖼️ 编辑题目图片</h4>';
+    if (q.image) {
+      html += '<div style="margin-bottom:8px"><img src="' + q.image + '" style="max-width:100%;max-height:200px;border-radius:8px;border:1px solid var(--border)"></div>';
+    }
+    html += '<div class="file-row" style="margin-bottom:8px">';
+    html += '<input type="file" id="imgFileInput" accept="image/*" style="flex:1">';
+    html += '</div>';
+    html += '<p class="editor-hint">支持上传截图、照片等图片，会自动压缩</p>';
+    html += '<div class="editor-actions">';
+    html += '<button class="btn btn-primary" id="saveImageBtn">💾 保存图片</button>';
+    if (q.image) html += '<button class="btn btn-danger" id="removeImageBtn">🗑️ 删除图片</button>';
+    html += '<button class="btn" id="cancelImageBtn">取消</button>';
+    html += '</div>';
+
+    div.innerHTML = html;
+    card.appendChild(div);
+
+    var pendingImage = null;
+
+    document.getElementById('imgFileInput').onchange = function(e) {
+      if (e.target.files && e.target.files[0]) {
+        readImageAsBase64(e.target.files[0], function(dataUrl) { pendingImage = dataUrl; });
+      }
+    };
+
+    document.getElementById('saveImageBtn').onclick = function() {
+      if (pendingImage) {
+        q.image = pendingImage;
+        api('PUT', '/questions/' + encodeURIComponent(q.id), { image: q.image }).then(function() { renderQuiz(); });
+      } else if (!q.image) {
+        alert('请先选择图片');
+        return;
+      }
+      div.remove();
+    };
+
+    if (q.image) {
+      document.getElementById('removeImageBtn').onclick = function() {
+        delete q.image;
+        api('PUT', '/questions/' + encodeURIComponent(q.id), { image: '' }).then(function() { div.remove(); renderQuiz(); });
+      };
+    }
+
+    document.getElementById('cancelImageBtn').onclick = function() { div.remove(); };
   }
 
   function openAnswerEditor(q) {
@@ -1430,7 +1595,7 @@
           }
           if (!qids.length) { alert('请选择要删除的题目'); return; }
           if (!confirm('确定删除 ' + qids.length + ' 道题？此操作不可撤销！')) return;
-          api('DELETE', '/users/' + _userId + '/questions', qids).then(function() {
+          api('DELETE', '/users/' + _userId + '/questions', { qids: qids }).then(function() {
             showToast('已删除 ' + qids.length + ' 道题', 'success');
             div.remove();
             openUsersPanel();
@@ -1444,7 +1609,7 @@
             e.stopPropagation();
             var qid = this.getAttribute('data-qid');
             if (!confirm('确定删除此题？')) return;
-            api('DELETE', '/users/' + _userId + '/questions', [qid]).then(function() {
+            api('DELETE', '/users/' + _userId + '/questions', { qids: [qid] }).then(function() {
               showToast('已删除', 'success');
               div.remove();
               openUsersPanel();
@@ -1543,6 +1708,7 @@
   function setupAddForm() {
     var addToggle = document.getElementById('addToggle');
     var addBody = document.getElementById('addBody');
+    var addImageData = null;
     addToggle.onclick = function() {
       if (addBody.style.display === 'none') { addBody.style.display = 'block'; addToggle.textContent = '➕ 手动添加题目 ▼'; }
       else { addBody.style.display = 'none'; addToggle.textContent = '➕ 手动添加题目 ▶'; }
@@ -1555,6 +1721,30 @@
       else { optArea.style.display = ''; }
     };
 
+    var addImageInput = document.getElementById('addImage');
+    var addImagePreview = document.getElementById('addImagePreview');
+    var addImageClear = document.getElementById('addImageClear');
+    if (addImageInput) {
+      addImageInput.onchange = function(e) {
+        if (e.target.files && e.target.files[0]) {
+          readImageAsBase64(e.target.files[0], function(dataUrl) {
+            addImageData = dataUrl;
+            addImagePreview.src = dataUrl;
+            addImagePreview.style.display = '';
+            addImageClear.style.display = '';
+          });
+        }
+      };
+    }
+    if (addImageClear) {
+      addImageClear.onclick = function() {
+        addImageData = null;
+        addImagePreview.style.display = 'none';
+        addImageClear.style.display = 'none';
+        addImageInput.value = '';
+      };
+    }
+
     document.getElementById('addSubmitBtn').onclick = function() {
       var type = document.getElementById('addType').value;
       var subject = document.getElementById('addSubject').value.trim();
@@ -1563,19 +1753,20 @@
       var answerStr = document.getElementById('addAnswer').value.trim();
       var explanation = document.getElementById('addExplanation').value.trim();
 
-      if (!question) { alert('请输入题目内容'); return; }
+      if (!question && !addImageData) { alert('请输入题目内容或上传图片'); return; }
       if (!answerStr) { alert('请输入答案'); return; }
 
       var q = {
         id: 'add_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
         type: type,
-        question: question,
+        question: question || '（图片题）',
         options: [],
         answer: '',
         subject: subject || '',
         category: category || '',
         difficulty: 1,
-        explanation: explanation || ''
+        explanation: explanation || '',
+        image: addImageData || ''
       };
 
       if (type === 'single' || type === 'multiple') {
@@ -1613,6 +1804,10 @@
         document.getElementById('addOptions').value = '';
         document.getElementById('addAnswer').value = '';
         document.getElementById('addExplanation').value = '';
+        addImageData = null;
+        if (addImagePreview) addImagePreview.style.display = 'none';
+        if (addImageClear) addImageClear.style.display = 'none';
+        if (addImageInput) addImageInput.value = '';
         loadAllData().then(function() { showToast('添加题目成功！', 'success'); });
       }).catch(function() { showToast('添加失败', 'error'); });
     };

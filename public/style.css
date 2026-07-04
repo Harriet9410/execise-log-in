@@ -74,6 +74,9 @@ header h1{font-size:20px;}
 .q-tag.diff-3{background:var(--red-light);color:var(--red);}
 .q-number{font-size:13px;color:var(--text2);margin-bottom:8px;}
 .q-question{font-size:18px;font-weight:600;line-height:1.7;margin-bottom:20px;white-space:pre-wrap;}
+.q-image{margin-bottom:16px;text-align:center;}
+.q-image img{max-width:100%;border-radius:8px;cursor:pointer;transition:transform 0.2s;}
+.q-image img:hover{transform:scale(1.02);}
 
 .q-options{list-style:none;display:flex;flex-direction:column;gap:10px;}
 .q-options li{padding:14px 18px;border:2px solid var(--border);border-radius:10px;cursor:pointer;font-size:15px;display:flex;gap:10px;line-height:1.5;}

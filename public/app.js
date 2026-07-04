@@ -290,6 +290,8 @@
     if (/问答|简答|论述|计算|编程/.test(h)) return TYPE_QA;
     if (/选择/.test(h)) return TYPE_SINGLE;
     if (/综合/.test(h)) return TYPE_QA;
+    if (/TrueFalse|TF|Judge/i.test(h)) return TYPE_JUDGE;
+    if (/Cloze|Fill|Banked/i.test(h)) return TYPE_FILL;
     return '';
   }
 
@@ -420,6 +422,7 @@
     if (/^[a-zA-Z]\d+\s+[a-zA-Z]\d+$/.test(line) && line.length < 20) return true;
     if (/^\d+[a-zA-Z]\d*$/.test(line) && line.length <= 6 && !/^\d{1,4}\s*[.、)）.．\]:：]/.test(line)) return true;
     if (/^[a-zA-Z]\d+$/.test(line) && line.length <= 4 && !/^[A-Da-d]\d+$/.test(line)) return true;
+    if (/^\d+\/\d+$/.test(line)) return true;
     return false;
   }
 
@@ -430,6 +433,31 @@
     for (var i = 0; i < lines.length; i++) {
       var t = lines[i].trim();
       if (t) cleanLines.push(t);
+    }
+
+    var blankLineIdx = -1;
+    for (var i = 0; i < cleanLines.length; i++) {
+      if (/_{3,}/.test(cleanLines[i])) { blankLineIdx = i; break; }
+    }
+    if (blankLineIdx > 0) {
+      var wordEnd = blankLineIdx;
+      var wordStart = blankLineIdx;
+      for (var i = blankLineIdx - 1; i >= 0; i--) {
+        var w = cleanLines[i];
+        if (w.length <= 30 && w.split(/\s+/).length <= 3 && /^[a-zA-Z]/.test(w) && !/^\d/.test(w) && !/\.$/.test(w)) {
+          wordStart = i;
+        } else {
+          break;
+        }
+      }
+      if (wordEnd - wordStart >= 8) {
+        var wb = [];
+        for (var i = wordStart; i < wordEnd; i++) wb.push(cleanLines[i]);
+        var newLines = cleanLines.slice(0, wordStart);
+        newLines.push('备选词：' + wb.join(' / '));
+        for (var i = wordEnd; i < cleanLines.length; i++) newLines.push(cleanLines[i]);
+        cleanLines = newLines;
+      }
     }
 
     var preprocessed = [];
@@ -444,6 +472,20 @@
       }
       preprocessed.push(lt);
     }
+
+    var preSplit = [];
+    for (var i = 0; i < preprocessed.length; i++) {
+      var lt = preprocessed[i];
+      lt = lt.replace(/([.!?。！？)）])\s*(?=\d{1,4}\s*[.．]\s*[A-Z])/g, '$1\n');
+      lt = lt.replace(/([a-z)])\s*(?=\d{2,4}\s*[.．]\s*[A-Z])/g, '$1\n');
+      lt = lt.replace(/([.!?。！？)])([A-D](?:\s*[.．:：]|[)\s]|$))/g, '$1\n$2');
+      lt = lt.replace(/([a-z)])([A-D](?:\s*[.．:：]|[)\s]|$))/g, '$1\n$2');
+      var parts = lt.split('\n');
+      for (var p = 0; p < parts.length; p++) {
+        if (parts[p].trim()) preSplit.push(parts[p].trim());
+      }
+    }
+    preprocessed = preSplit;
 
     var crossMerged = [];
     for (var i = 0; i < preprocessed.length; i++) {
@@ -517,8 +559,36 @@
       var lt = expanded[i];
       if (/^[A-Da-d]$/.test(lt) && i + 1 < expanded.length) {
         var nxt = expanded[i + 1];
-        if (!/^[A-Da-d]$/.test(nxt) && !/^[Uu](?:nit)?\s*\d+$/.test(nxt) && !/^\d{1,4}$/.test(nxt) && !/^[（(]\s*[A-Da-d]/.test(nxt)) {
+        var isLastOpt = /^[Dd]$/.test(lt);
+        var nxtIsStandaloneNum = /^\d{1,4}$/.test(nxt);
+        var skipNumMerge = false;
+        if (isLastOpt && nxtIsStandaloneNum) {
+          var numVal = parseInt(nxt);
+          if (numVal <= 30 || (numVal >= 41 && numVal <= 60)) {
+            if (i + 2 < expanded.length && (/^[A-Da-d]$/.test(expanded[i+2]) || /^[A-Da-d]\s*[.．:：]/.test(expanded[i+2]) || /^\d{1,4}\s*[.．]/.test(expanded[i+2]))) {
+              skipNumMerge = true;
+            }
+          }
+        }
+        if (!/^[A-Da-d]$/.test(nxt) && !/^[Uu](?:nit)?\s*\d+$/.test(nxt) && !skipNumMerge && !/^[（(]\s*[A-Da-d]/.test(nxt)) {
           merged.push(lt + '. ' + nxt); i++; continue;
+        }
+      }
+      if (/^[A-Da-d]\s*[.．:：]\s*$/.test(lt) && i + 1 < expanded.length) {
+        var nxt = expanded[i + 1];
+        var isLastOpt2 = /^[Dd]\s*[.．:：]/.test(lt);
+        var nxtIsStandaloneNum2 = /^\d{1,4}$/.test(nxt);
+        var skipNumMerge2 = false;
+        if (isLastOpt2 && nxtIsStandaloneNum2) {
+          var numVal2 = parseInt(nxt);
+          if (numVal2 <= 30 || (numVal2 >= 41 && numVal2 <= 60)) {
+            if (i + 2 < expanded.length && (/^[A-Da-d]$/.test(expanded[i+2]) || /^[A-Da-d]\s*[.．:：]/.test(expanded[i+2]) || /^\d{1,4}\s*[.．]/.test(expanded[i+2]))) {
+              skipNumMerge2 = true;
+            }
+          }
+        }
+        if (!isOptLine(nxt) && !/^[A-Da-d]$/.test(nxt) && !/^[Uu](?:nit)?\s*\d+$/.test(nxt) && !skipNumMerge2 && !/^[（(]\s*[A-Da-d]/.test(nxt)) {
+          merged.push(lt.charAt(0).toUpperCase() + '. ' + nxt); i++; continue;
         }
       }
       var stuck = lt.match(/^([A-Da-d])(True|False|正确|错误|对|错|Yes|No)$/i);
@@ -540,9 +610,17 @@
         currentType = detectSectionType(headerMatch[1]);
         continue;
       }
-      if (isGraphArtifact(t) && !/^\d{1,4}\s*[.、)）.．\]:：]/.test(t) && !/^\[IMG:img_\d+\]\s*\d{1,4}\s*[.、)）.．\]:：]/.test(t)) continue;
+      var isStandaloneQNum = false;
+      if (/^\d{1,3}$/.test(t.replace(/^\[IMG:img_\d+\]\s*/, ''))) {
+        for (var li = i + 1; li < Math.min(i + 4, merged.length); li++) {
+          if (/^[A-Da-d]$/.test(merged[li]) || /^[A-Da-d]\s*[.．:：]/.test(merged[li]) || /^[（(]\s*[A-Da-d]/.test(merged[li])) {
+            isStandaloneQNum = true; break;
+          }
+        }
+      }
+      if (isGraphArtifact(t) && !/^\d{1,4}\s*[.、)）.．\]:：]/.test(t) && !/^\[IMG:img_\d+\]\s*\d{1,4}\s*[.、)）.．\]:：]/.test(t) && !isStandaloneQNum) continue;
       var tForQCheck = t.replace(/^\[IMG:img_\d+\]\s*/, '');
-      var isQ = (/^\d{1,4}\s*[.、)）.．\]:：]/.test(tForQCheck) && !/^\d+\.\d+/.test(tForQCheck)) || (/^\d{1,4}\.\s*\S/.test(tForQCheck) && !/^\d+\.\d+/.test(tForQCheck));
+      var isQ = isStandaloneQNum || (/^\d{1,4}\s*[.、)）.．\]:：]/.test(tForQCheck) && !/^\d+\.\d+/.test(tForQCheck)) || (/^\d{1,4}\.\s*\S/.test(tForQCheck) && !/^\d+\.\d+/.test(tForQCheck));
       if (/^第\s*\d+\s*章/.test(t)) continue;
       if (isQ && current.length) { blocks.push({ text: current.join('\n'), typeHint: currentType }); current = []; }
       current.push(t);
@@ -554,6 +632,24 @@
       var q = parseBlock(blocks[b].text, questions.length, defaultCat, blocks[b].typeHint);
       if (q) questions.push(q);
     }
+
+    var qaNoOptCount = 0, judgeCandidateCount = 0;
+    for (var i = 0; i < questions.length; i++) {
+      if (questions[i].type === TYPE_QA && questions[i].options.length === 0 && !/_{2,}/.test(questions[i].question)) {
+        qaNoOptCount++;
+        if (!/[?？]/.test(questions[i].question) && questions[i].question.length > 15) judgeCandidateCount++;
+      }
+    }
+    if (qaNoOptCount >= 3 && judgeCandidateCount / qaNoOptCount > 0.6) {
+      for (var i = 0; i < questions.length; i++) {
+        if (questions[i].type === TYPE_QA && questions[i].options.length === 0 && !/_{2,}/.test(questions[i].question) && !/[?？]/.test(questions[i].question) && questions[i].question.length > 15) {
+          questions[i].type = TYPE_JUDGE;
+          questions[i].options = ['对', '错'];
+          questions[i].answer = '';
+        }
+      }
+    }
+
     return questions;
   }
 
@@ -566,14 +662,16 @@
     var q = { id:'imp_'+Date.now()+'_'+idx, type: typeHint || TYPE_QA, category: defaultCat||'', difficulty:1, question:'', options:[], answer:'', explanation:'', subject:'', image:'' };
     var qLines = [], optLines = [], ansBuf = [], expLines = [];
     var inAns = false, inExp = false, category = defaultCat || '';
+    var prevWasOpt = false;
 
     for (var i = 0; i < filtered.length; i++) {
       var line = filtered[i];
       if (isFigureLabel(line)) continue;
-      if (isGraphArtifact(line)) {
+      if (isGraphArtifact(line) && !prevWasOpt) {
         var looksLikeQNum = /^\d{1,4}\s*[.、)）.．\]:：]/.test(line) && !/^\d+\.\d+/.test(line);
         if (!looksLikeQNum) continue;
       }
+      prevWasOpt = isOptLine(line);
 
       var cm = line.match(/^(?:分类|章节|知识点|题型)[：:]\s*(.+)/);
       if (cm) { category = cm[1].trim(); continue; }
@@ -635,7 +733,7 @@
 
     var answerText = ansBuf.join(' ').trim();
     var first = qLines[0] || '';
-    q.question = first.replace(/^\d{1,4}\s*[.、)）.．\]:：]\s*/, '').trim();
+    q.question = first.replace(/^\d{1,4}\s*[.、)）.．\]:：]\s*/, '').replace(/^\d{1,3}\s+/, '').replace(/^\d{1,3}$/, '').trim();
     if (qLines.length > 1) { for (var i = 1; i < qLines.length; i++) q.question += '\n' + qLines[i]; }
     q.question = q.question.trim();
     if (category) q.category = category;

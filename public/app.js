@@ -1207,25 +1207,36 @@
   function openUserQuestions(userId, username) {
     var existing = document.getElementById('userQPanel');
     if (existing) existing.remove();
+    var _userId = userId;
+    var _username = username;
 
-    api('GET', '/users/' + userId + '/questions').then(function(questions) {
+    api('GET', '/users/' + _userId + '/questions').then(function(questions) {
       var div = document.createElement('div');
       div.id = 'userQPanel';
       div.className = 'cat-editor';
       div.style.marginTop = '12px';
 
       var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
-      html += '<h4 style="margin:0">📋 用户「' + escapeHtml(username) + '」的题库（共 ' + questions.length + ' 题）</h4>';
+      html += '<h4 style="margin:0">📋 管理「' + escapeHtml(_username) + '」的题库（共 ' + questions.length + ' 题）</h4>';
       html += '<button class="btn" id="closeUserQBtn">关闭</button>';
       html += '</div>';
+
+      html += '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
+      html += '<button class="btn btn-primary" id="uqAddBtn">➕ 添加题目</button>';
+      html += '<button class="btn" id="uqImportBtn">📥 导入题目</button>';
+      html += '<button class="btn" id="uqEditCatBtn">🏷️ 批量改分类</button>';
+      html += '<button class="btn" id="uqEditSubjBtn">📚 批量改科目</button>';
+      html += '<label style="cursor:pointer;font-size:13px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="uqSelectAll"> 全选</label>';
+      html += '<button class="btn btn-danger" id="uqDeleteSelected" style="padding:4px 12px;font-size:12px">🗑️ 删除选中</button>';
+      html += '</div>';
+
+      html += '<div id="uqAddArea" style="display:none;margin-bottom:12px"></div>';
+      html += '<div id="uqImportArea" style="display:none;margin-bottom:12px"></div>';
+      html += '<div id="uqEditCatArea" style="display:none;margin-bottom:12px"></div>';
 
       if (!questions.length) {
         html += '<div style="text-align:center;padding:20px;color:var(--text2)">该用户暂无题目</div>';
       } else {
-        html += '<div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap">';
-        html += '<label style="cursor:pointer;font-size:13px"><input type="checkbox" id="uqSelectAll"> 全选</label>';
-        html += '<button class="btn btn-danger" id="uqDeleteSelected" style="padding:4px 12px;font-size:12px">🗑️ 删除选中</button>';
-        html += '</div>';
         html += '<div class="subj-batch-list" style="max-height:400px">';
 
         var subjectGroups = {};
@@ -1245,7 +1256,7 @@
           html += '<div style="padding:6px 10px;font-weight:600;font-size:12px;color:var(--accent);background:var(--accent-light)">' + escapeHtml(key) + '（' + items.length + '题）</div>';
           for (var j = 0; j < items.length; j++) {
             var q = items[j];
-            html += '<label class="subj-batch-item" style="display:flex;align-items:flex-start;gap:6px;padding:6px 8px;font-size:13px;cursor:pointer;border-radius:4px">';
+            html += '<div class="subj-batch-item" style="display:flex;align-items:flex-start;gap:6px;padding:6px 8px;font-size:13px;border-radius:4px">';
             html += '<input type="checkbox" class="uq-check" data-qid="' + escapeAttr(q.id) + '" style="margin-top:3px">';
             html += '<div style="flex:1">';
             html += '<div style="font-weight:600">' + escapeHtml(q.question.substring(0, 80)) + '</div>';
@@ -1254,8 +1265,9 @@
             if (q.difficulty) html += ' <span>难度' + q.difficulty + '</span>';
             if (!hasAnswer(q)) html += ' <span style="color:var(--red)">⚠无答案</span>';
             html += '</div></div>';
-            html += '<button class="btn uq-del-one" data-qid="' + escapeAttr(q.id) + '" style="padding:2px 8px;font-size:11px;flex-shrink:0">🗑️</button>';
-            html += '</label>';
+            html += '<button class="btn uq-edit-one" data-qid="' + escapeAttr(q.id) + '" style="padding:2px 8px;font-size:11px;flex-shrink:0">✏️</button>';
+            html += '<button class="btn btn-danger uq-del-one" data-qid="' + escapeAttr(q.id) + '" style="padding:2px 8px;font-size:11px;flex-shrink:0">🗑️</button>';
+            html += '</div>';
           }
         }
         html += '</div>';
@@ -1265,6 +1277,144 @@
       document.querySelector('.content').appendChild(div);
 
       document.getElementById('closeUserQBtn').onclick = function() { div.remove(); };
+
+      document.getElementById('uqAddBtn').onclick = function() {
+        var area = document.getElementById('uqAddArea');
+        area.style.display = area.style.display === 'none' ? '' : 'none';
+        if (area.innerHTML) return;
+        var h = '<div style="padding:12px;background:var(--accent-light);border-radius:8px;border-left:4px solid var(--accent)">';
+        h += '<h4 style="font-size:14px;margin-bottom:8px">➕ 为该用户添加题目</h4>';
+        h += '<div class="cat-editor-row"><span>类型：</span><select id="uqAddType" class="select"><option value="single">单选</option><option value="multiple">多选</option><option value="judge">判断</option><option value="fill">填空</option><option value="qa">问答</option></select></div>';
+        h += '<div class="cat-editor-row"><span>科目：</span><input type="text" id="uqAddSubj" placeholder="科目"></div>';
+        h += '<div class="cat-editor-row"><span>分类：</span><input type="text" id="uqAddCat" placeholder="分类"></div>';
+        h += '<div class="form-group"><label>题目：</label><textarea id="uqAddQ" class="paste-area" style="min-height:60px" placeholder="题目内容"></textarea></div>';
+        h += '<div id="uqAddOptArea"><div class="form-group"><label>选项（每行一个，A. xxx）：</label><textarea id="uqAddOpts" class="paste-area" style="min-height:60px" placeholder="A. 选项1\nB. 选项2\nC. 选项3\nD. 选项4"></textarea></div></div>';
+        h += '<div class="form-group"><label>答案：</label><input type="text" id="uqAddAns" class="q-fill" placeholder="单选填A，多选填AB，判断填对/错，其他直接写"></div>';
+        h += '<div class="form-group"><label>解析：</label><input type="text" id="uqAddExp" class="q-fill" placeholder="可选"></div>';
+        h += '<button class="btn btn-primary" id="uqAddSubmit">✅ 添加</button>';
+        h += '</div>';
+        area.innerHTML = h;
+        document.getElementById('uqAddType').onchange = function() {
+          var t = this.value;
+          document.getElementById('uqAddOptArea').style.display = (t === 'qa' || t === 'fill') ? 'none' : '';
+        };
+        document.getElementById('uqAddSubmit').onclick = function() {
+          var type = document.getElementById('uqAddType').value;
+          var question = document.getElementById('uqAddQ').value.trim();
+          var ansStr = document.getElementById('uqAddAns').value.trim();
+          if (!question) { alert('请输入题目'); return; }
+          if (!ansStr) { alert('请输入答案'); return; }
+          var nq = { id: 'adm_' + Date.now() + '_' + Math.random().toString(36).substr(2,6), type: type, question: question, options: [], answer: '', subject: document.getElementById('uqAddSubj').value.trim(), category: document.getElementById('uqAddCat').value.trim(), difficulty: 1, explanation: document.getElementById('uqAddExp').value.trim() };
+          if (type === 'single' || type === 'multiple') {
+            var optText = document.getElementById('uqAddOpts').value.trim();
+            var optLines = optText.split('\n');
+            nq.options = [];
+            for (var k = 0; k < optLines.length; k++) { var ol = optLines[k].trim().replace(/^[A-Da-d]\s*[.、)）.．]\s*/, '').trim(); if (ol) nq.options.push(ol); }
+            if (nq.options.length < 2) { alert('至少2个选项'); return; }
+            var a = ansStr.toUpperCase().replace(/[^A-Z]/g, '');
+            if (type === 'single') nq.answer = a.charCodeAt(0) - 65;
+            else nq.answer = a.split('').map(function(c) { return c.charCodeAt(0) - 65; });
+          } else if (type === 'judge') {
+            nq.options = ['对', '错'];
+            nq.answer = /^(对|正确|√|T|True|是)$/i.test(ansStr);
+          } else { nq.answer = ansStr; }
+          api('POST', '/users/' + _userId + '/questions', [nq]).then(function() {
+            showToast('已添加题目', 'success');
+            div.remove();
+            openUserQuestions(_userId, _username);
+          });
+        };
+      };
+
+      document.getElementById('uqImportBtn').onclick = function() {
+        var area = document.getElementById('uqImportArea');
+        area.style.display = area.style.display === 'none' ? '' : 'none';
+        if (area.innerHTML) return;
+        var h = '<div style="padding:12px;background:var(--accent-light);border-radius:8px;border-left:4px solid var(--accent)">';
+        h += '<h4 style="font-size:14px;margin-bottom:8px">📥 导入题目到该用户题库</h4>';
+        h += '<textarea id="uqImportText" class="paste-area" style="min-height:120px" placeholder="粘贴题目文本...\n\n格式：\n1. 题目？\nA. 选项A\nB. 选项B\n答案：A"></textarea>';
+        h += '<button class="btn btn-primary" id="uqImportSubmit" style="margin-top:8px">📥 导入</button>';
+        h += '</div>';
+        area.innerHTML = h;
+        document.getElementById('uqImportSubmit').onclick = function() {
+          var text = document.getElementById('uqImportText').value.trim();
+          if (!text) { alert('请粘贴题目文本'); return; }
+          var parsed = parseQuestions(text);
+          var valid = parsed.filter(function(q) { return q._valid; });
+          if (!valid.length) { alert('未能解析出有效题目'); return; }
+          var qs = valid.map(function(q) {
+            return { id: 'imp_' + Date.now() + '_' + Math.random().toString(36).substr(2,6), type: q.type, question: q.question, options: q.options || [], answer: q.answer, subject: q.subject || '', category: q.category || '', difficulty: q.difficulty || 1, explanation: q.explanation || '' };
+          });
+          api('POST', '/users/' + _userId + '/questions', qs).then(function() {
+            showToast('已导入 ' + qs.length + ' 道题', 'success');
+            div.remove();
+            openUserQuestions(_userId, _username);
+          });
+        };
+      };
+
+      document.getElementById('uqEditCatBtn').onclick = function() {
+        var area = document.getElementById('uqEditCatArea');
+        area.style.display = area.style.display === 'none' ? '' : 'none';
+        if (area.innerHTML) return;
+        var h = '<div style="padding:12px;background:var(--yellow-light);border-radius:8px;border-left:4px solid var(--yellow)">';
+        h += '<h4 style="font-size:14px;margin-bottom:8px">🏷️ 批量修改分类（先勾选题目）</h4>';
+        h += '<div class="cat-editor-row"><span>新分类：</span><input type="text" id="uqNewCat" placeholder="输入分类名"></div>';
+        h += '<button class="btn btn-primary" id="uqSaveCat">💾 保存</button>';
+        h += '</div>';
+        area.innerHTML = h;
+        document.getElementById('uqSaveCat').onclick = function() {
+          var newCat = document.getElementById('uqNewCat').value.trim();
+          if (!newCat) { alert('请输入分类名'); return; }
+          var checks = div.querySelectorAll('.uq-check');
+          var count = 0;
+          var promises = [];
+          for (var i = 0; i < checks.length; i++) {
+            if (checks[i].checked) {
+              count++;
+              promises.push(api('PUT', '/users/' + _userId + '/questions/' + encodeURIComponent(checks[i].getAttribute('data-qid')), { category: newCat }));
+            }
+          }
+          if (!count) { alert('请先勾选题目'); return; }
+          Promise.all(promises).then(function() {
+            showToast('已修改 ' + count + ' 题分类', 'success');
+            div.remove();
+            openUserQuestions(_userId, _username);
+          });
+        };
+      };
+
+      document.getElementById('uqEditSubjBtn').onclick = function() {
+        var area = document.getElementById('uqEditCatArea');
+        area.style.display = area.style.display === 'none' ? '' : 'none';
+        if (area.querySelector('#uqNewSubj')) return;
+        area.innerHTML = '';
+        var h = '<div style="padding:12px;background:var(--yellow-light);border-radius:8px;border-left:4px solid var(--yellow)">';
+        h += '<h4 style="font-size:14px;margin-bottom:8px">📚 批量修改科目（先勾选题目）</h4>';
+        h += '<div class="cat-editor-row"><span>新科目：</span><input type="text" id="uqNewSubj" placeholder="输入科目名"></div>';
+        h += '<button class="btn btn-primary" id="uqSaveSubj">💾 保存</button>';
+        h += '</div>';
+        area.innerHTML = h;
+        document.getElementById('uqSaveSubj').onclick = function() {
+          var newSubj = document.getElementById('uqNewSubj').value.trim();
+          if (!newSubj) { alert('请输入科目名'); return; }
+          var checks = div.querySelectorAll('.uq-check');
+          var count = 0;
+          var promises = [];
+          for (var i = 0; i < checks.length; i++) {
+            if (checks[i].checked) {
+              count++;
+              promises.push(api('PUT', '/users/' + _userId + '/questions/' + encodeURIComponent(checks[i].getAttribute('data-qid')), { subject: newSubj }));
+            }
+          }
+          if (!count) { alert('请先勾选题目'); return; }
+          Promise.all(promises).then(function() {
+            showToast('已修改 ' + count + ' 题科目', 'success');
+            div.remove();
+            openUserQuestions(_userId, _username);
+          });
+        };
+      };
 
       if (questions.length) {
         var checks = div.querySelectorAll('.uq-check');
@@ -1280,7 +1430,7 @@
           }
           if (!qids.length) { alert('请选择要删除的题目'); return; }
           if (!confirm('确定删除 ' + qids.length + ' 道题？此操作不可撤销！')) return;
-          api('DELETE', '/users/' + userId + '/questions', qids).then(function() {
+          api('DELETE', '/users/' + _userId + '/questions', qids).then(function() {
             showToast('已删除 ' + qids.length + ' 道题', 'success');
             div.remove();
             openUsersPanel();
@@ -1294,15 +1444,100 @@
             e.stopPropagation();
             var qid = this.getAttribute('data-qid');
             if (!confirm('确定删除此题？')) return;
-            api('DELETE', '/users/' + userId + '/questions', [qid]).then(function() {
+            api('DELETE', '/users/' + _userId + '/questions', [qid]).then(function() {
               showToast('已删除', 'success');
               div.remove();
               openUsersPanel();
             });
           };
         }
+
+        var editOneBtns = div.querySelectorAll('.uq-edit-one');
+        for (var i = 0; i < editOneBtns.length; i++) {
+          editOneBtns[i].onclick = function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var qid = this.getAttribute('data-qid');
+            var q = questions.find(function(x) { return x.id === qid; });
+            if (!q) return;
+            openAdminEditQuestion(_userId, _username, q, div);
+          };
+        }
       }
     });
+  }
+
+  function openAdminEditQuestion(userId, username, q, parentDiv) {
+    var existing = document.getElementById('adminEditQ');
+    if (existing) existing.remove();
+    var div = document.createElement('div');
+    div.id = 'adminEditQ';
+    div.className = 'answer-editor';
+
+    var html = '<h4>✏️ 编辑题目</h4>';
+    html += '<div class="cat-editor-row"><span>科目：</span><input type="text" id="aeqSubj" value="' + escapeAttr(q.subject || '') + '"></div>';
+    html += '<div class="cat-editor-row"><span>分类：</span><input type="text" id="aeqCat" value="' + escapeAttr(q.category || '') + '"></div>';
+    html += '<div class="form-group"><label>题目内容：</label><textarea id="aeqQuestion" class="paste-area" style="min-height:60px">' + escapeHtml(q.question) + '</textarea></div>';
+
+    if (q.type === 'single') {
+      html += '<p class="editor-hint">选择正确选项：</p><div class="editor-options">';
+      for (var i = 0; i < q.options.length; i++) {
+        var checked = (typeof q.answer === 'number' && q.answer === i) ? ' checked' : '';
+        html += '<label class="editor-opt"><input type="radio" name="aeqRadio" value="' + i + '"' + checked + '> ' + String.fromCharCode(65+i) + '. ' + escapeHtml(q.options[i]) + '</label>';
+      }
+      html += '</div>';
+    } else if (q.type === 'multiple') {
+      html += '<p class="editor-hint">选择正确选项：</p><div class="editor-options">';
+      for (var i = 0; i < q.options.length; i++) {
+        var checked = (Array.isArray(q.answer) && q.answer.indexOf(i) !== -1) ? ' checked' : '';
+        html += '<label class="editor-opt"><input type="checkbox" name="aeqCheck" value="' + i + '"' + checked + '> ' + String.fromCharCode(65+i) + '. ' + escapeHtml(q.options[i]) + '</label>';
+      }
+      html += '</div>';
+    } else if (q.type === 'judge') {
+      html += '<p class="editor-hint">答案：</p>';
+      html += '<label class="editor-opt"><input type="radio" name="aeqJudge" value="true"' + (q.answer === true ? ' checked' : '') + '> 正确</label>';
+      html += '<label class="editor-opt"><input type="radio" name="aeqJudge" value="false"' + (q.answer === false ? ' checked' : '') + '> 错误</label>';
+    } else {
+      html += '<div class="form-group"><label>答案：</label><input type="text" id="aeqAnsText" class="q-fill" value="' + escapeAttr(String(q.answer || '')) + '"></div>';
+    }
+
+    html += '<div class="form-group" style="margin-top:8px"><label>解析：</label><textarea id="aeqExp" class="paste-area" style="min-height:40px">' + escapeHtml(q.explanation || '') + '</textarea></div>';
+    html += '<div class="editor-actions"><button class="btn btn-primary" id="aeqSave">💾 保存</button><button class="btn" id="aeqCancel">取消</button></div>';
+
+    div.innerHTML = html;
+    document.querySelector('.content').appendChild(div);
+
+    document.getElementById('aeqCancel').onclick = function() { div.remove(); };
+
+    document.getElementById('aeqSave').onclick = function() {
+      var fields = {
+        subject: document.getElementById('aeqSubj').value.trim(),
+        category: document.getElementById('aeqCat').value.trim(),
+        question: document.getElementById('aeqQuestion').value.trim(),
+        explanation: document.getElementById('aeqExp').value.trim()
+      };
+
+      if (q.type === 'single') {
+        var radios = document.getElementsByName('aeqRadio');
+        for (var i = 0; i < radios.length; i++) { if (radios[i].checked) { fields.answer = parseInt(radios[i].value); break; } }
+      } else if (q.type === 'multiple') {
+        var checks = document.getElementsByName('aeqCheck');
+        fields.answer = [];
+        for (var i = 0; i < checks.length; i++) { if (checks[i].checked) fields.answer.push(parseInt(checks[i].value)); }
+      } else if (q.type === 'judge') {
+        var judges = document.getElementsByName('aeqJudge');
+        for (var i = 0; i < judges.length; i++) { if (judges[i].checked) { fields.answer = judges[i].value === 'true'; break; } }
+      } else {
+        fields.answer = document.getElementById('aeqAnsText').value.trim();
+      }
+
+      api('PUT', '/users/' + userId + '/questions/' + encodeURIComponent(q.id), fields).then(function() {
+        showToast('已保存', 'success');
+        div.remove();
+        parentDiv.remove();
+        openUserQuestions(userId, username);
+      });
+    };
   }
 
   function setupAddForm() {

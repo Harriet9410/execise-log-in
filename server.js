@@ -87,6 +87,14 @@ app.get('/api/users/:id/questions', auth, adminOnly, (req, res) => {
   res.json(db.getQuestions(id));
 });
 
+app.post('/api/users/:id/questions', auth, adminOnly, (req, res) => {
+  const id = parseInt(req.params.id);
+  const questions = req.body;
+  if (!Array.isArray(questions)) return res.status(400).json({ error: '请发送题目数组' });
+  db.addQuestions(id, questions);
+  res.json({ count: questions.length });
+});
+
 app.delete('/api/users/:id/questions', auth, adminOnly, (req, res) => {
   const id = parseInt(req.params.id);
   const { qids } = req.body;

@@ -155,6 +155,8 @@
     if (/判断/.test(h)) return TYPE_JUDGE;
     if (/填空/.test(h)) return TYPE_FILL;
     if (/问答|简答|论述|计算|编程/.test(h)) return TYPE_QA;
+    if (/选择/.test(h)) return TYPE_SINGLE;
+    if (/综合/.test(h)) return TYPE_QA;
     return '';
   }
 
@@ -232,7 +234,7 @@
       var optPart = line.substring(start, end).trim();
       if (optPart) parts.push(optPart);
     }
-    return parts.length >= 3 ? parts : null;
+    return parts.length >= 2 ? parts : null;
   }
 
   function isOptLine(line) {
@@ -244,15 +246,98 @@
     return false;
   }
 
+  function isFigureLabel(line) {
+    if (/^[一二三四五六七八九十]+[、.．]\s*\d+\s*题图/.test(line)) return true;
+    if (/^[一二三四五六七八九十]+[、.．]\s*\d+\s*题$/.test(line)) return true;
+    if (/^图\s*\d/.test(line)) return true;
+    if (/^[一二三四五六七八九十]+[、.．]\s*\d+\s*题图.{0,10}$/.test(line)) return true;
+    return false;
+  }
+
+  function isGraphArtifact(line) {
+    if (/^[A-Za-z]\s*[A-Za-z]/.test(line) && line.length < 20 && !/^[A-Da-d]\s*[.、)）.．:：]/.test(line) && !/^[（(]\s*[A-Da-d]/.test(line)) {
+      if (/^[a-zA-Z]\s*\(?[a-zA-Z]/.test(line)) return true;
+    }
+    if (/^[oxOX]$/.test(line)) return true;
+    if (/^[-]?\d+\.?\d*\s+(m|s|N|kg|rad|cm|mm|m\/s|Pa|J|kN|Hz|π)\b/.test(line) && line.length < 15) return false;
+    if (/^[-]?\d+\.?\d*$/.test(line) && line.length <= 4) return true;
+    if (/^[a-z]\s*\([\d.]+\)/.test(line)) return true;
+    if (/^o\s+[-]?\d/.test(line)) return true;
+    if (/^[A-Z]\s+\d/.test(line) && line.length < 10 && !/^[A-D]\s*[.、)）.．:：]/.test(line)) return true;
+    if (/^\d+\s+[a-z]/.test(line) && line.length < 15 && !/^\d{1,4}\s*[.、)）.．\]:：]/.test(line)) return true;
+    if (/^[A-Za-z]+\/[A-Za-z]+$/.test(line)) return true;
+    if (/^\d+\s+\d+\s+\d+/.test(line) && line.length < 25 && !/^\d{1,4}\s*[.、)）.．\]:：]/.test(line)) return true;
+    if (/^\d+\s+[a-z]\s*[/／]/.test(line) && !/^\d{1,4}\s*[.、)）.．\]:：]/.test(line)) return true;
+    if (/^[a-z]\s*\([a-z]\)/.test(line)) return true;
+    if (/^\d+\s+\d+\s+\d+\s+\d+\s+[a-z]/.test(line)) return true;
+    if (/^[A-Z]\s+[a-z]$/i.test(line) && line.length <= 5) return true;
+    if (/^[a-z]$/i.test(line) && line.length === 1 && !/^[A-Da-d]$/.test(line)) return true;
+    if (/^[A-Z]$/i.test(line) && line.length === 1 && !/^[A-Da-d]$/.test(line)) return true;
+    if (/^[a-z]\([a-z]\)$/i.test(line) && line.length <= 6) return true;
+    if (/^[a-z]\/[a-z]$/i.test(line)) return true;
+    if (/^[a-z]\/[a-z]\s+\d/.test(line)) return true;
+    if (/^\d+\s+[a-z]\/[a-z]/.test(line) && !/^\d{1,4}\s*[.、)）.．\]:：]/.test(line)) return true;
+    if (/^[a-z]\(cm\)$/i.test(line)) return true;
+    if (/^[a-z]\(m\)$/i.test(line)) return true;
+    if (/^[a-z]\(s\)$/i.test(line)) return true;
+    return false;
+  }
+
   function parseSection(text, defaultCat, typeHint) {
     text = text.replace(/\n{3,}/g, '\n\n');
     var lines = text.split('\n');
     var cleanLines = [];
-    for (var i = 0; i < lines.length; i++) { var t = lines[i].trim(); if (t) cleanLines.push(t); }
+    for (var i = 0; i < lines.length; i++) {
+      var t = lines[i].trim();
+      if (t) cleanLines.push(t);
+    }
 
-    var expanded = [];
+    var preprocessed = [];
     for (var i = 0; i < cleanLines.length; i++) {
       var lt = cleanLines[i];
+      if (isFigureLabel(lt)) continue;
+      preprocessed.push(lt);
+    }
+
+    var crossMerged = [];
+    for (var i = 0; i < preprocessed.length; i++) {
+      var lt = preprocessed[i];
+      var curOptRe = /(?:[（(]\s*)?[A-D]\s*(?:[.、)）.．:：]\s*|[)）]\s*)/g;
+      var curOpts = [], m2;
+      while ((m2 = curOptRe.exec(lt)) !== null) curOpts.push(m2.index);
+      if (curOpts.length >= 1 && curOpts.length < 4 && i + 1 < preprocessed.length) {
+        var hasQuestionBeforeOpts = curOpts[0] > 5;
+        var lineStartsAsOpt = curOpts[0] < 3 && isOptLine(lt);
+        if (!lineStartsAsOpt || hasQuestionBeforeOpts) {
+          var nxt = preprocessed[i + 1];
+          var nxtOptRe = /(?:[（(]\s*)?[A-D]\s*(?:[.、)）.．:：]\s*|[)）]\s*)/g;
+          var nxtOpts = [];
+          while ((m2 = nxtOptRe.exec(nxt)) !== null) nxtOpts.push(m2.index);
+          if (nxtOpts.length >= 1 && nxtOpts[0] < 3) {
+            var curLastLetter = '';
+            var tmpRe = /(?:[（(]\s*)?([A-D])\s*(?:[.、)）.．:：]\s*|[)）]\s*)/g;
+            var tm;
+            while ((tm = tmpRe.exec(lt)) !== null) curLastLetter = tm[1];
+            var nxtFirstLetter = '';
+            tmpRe.lastIndex = 0;
+            while ((tm = tmpRe.exec(nxt)) !== null) { nxtFirstLetter = tm[1]; break; }
+            if (curLastLetter && nxtFirstLetter) {
+              var curCode = curLastLetter.charCodeAt(0);
+              var nxtCode = nxtFirstLetter.charCodeAt(0);
+              if (nxtCode > curCode && nxtCode <= 68) {
+                lt = lt + ' ' + nxt;
+                i++;
+              }
+            }
+          }
+        }
+      }
+      crossMerged.push(lt);
+    }
+
+    var expanded = [];
+    for (var i = 0; i < crossMerged.length; i++) {
+      var lt = crossMerged[i];
       var inlineParts = splitInlineOpts(lt);
       if (inlineParts) { for (var p = 0; p < inlineParts.length; p++) { if (inlineParts[p] && inlineParts[p].trim()) expanded.push(inlineParts[p]); } continue; }
       expanded.push(lt);
@@ -286,7 +371,8 @@
         currentType = detectSectionType(headerMatch[1]);
         continue;
       }
-      var isQ = /^\d{1,4}\s*[.、)）.．\]:：]/.test(t) || /^\d{1,4}\.\s*\S/.test(t) || /^\d{1,4}$/.test(t);
+      if (isGraphArtifact(t) && !/^\d{1,4}\s*[.、)）.．\]:：]/.test(t)) continue;
+      var isQ = (/^\d{1,4}\s*[.、)）.．\]:：]/.test(t) && !/^\d+\.\d+/.test(t)) || (/^\d{1,4}\.\s*\S/.test(t) && !/^\d+\.\d+/.test(t));
       if (/^第\s*\d+\s*章/.test(t)) continue;
       if (isQ && current.length) { blocks.push({ text: current.join('\n'), typeHint: currentType }); current = []; }
       current.push(t);
@@ -313,6 +399,11 @@
 
     for (var i = 0; i < filtered.length; i++) {
       var line = filtered[i];
+      if (isFigureLabel(line)) continue;
+      if (isGraphArtifact(line)) {
+        var looksLikeQNum = /^\d{1,4}\s*[.、)）.．\]:：]/.test(line) && !/^\d+\.\d+/.test(line);
+        if (!looksLikeQNum) continue;
+      }
 
       var cm = line.match(/^(?:分类|章节|知识点|题型)[：:]\s*(.+)/);
       if (cm) { category = cm[1].trim(); continue; }
@@ -407,8 +498,10 @@
         if (ans.length >= 1) q.answer = ans.charCodeAt(0) - 65;
         else q.answer = '';
       } else {
-        q.type = TYPE_QA;
-        q.answer = answerText;
+        q.type = TYPE_SINGLE;
+        q.options = ['A', 'B', 'C', 'D'];
+        q.answer = '';
+        q._valid = true;
       }
     } else if (typeHint === TYPE_MULTIPLE) {
       if (hasOpts) {
@@ -417,8 +510,10 @@
         else if (ans.length === 1) q.answer = [ans.charCodeAt(0) - 65];
         else q.answer = [];
       } else {
-        q.type = TYPE_QA;
-        q.answer = answerText;
+        q.type = TYPE_MULTIPLE;
+        q.options = ['A', 'B', 'C', 'D'];
+        q.answer = [];
+        q._valid = true;
       }
     } else if (hasBlank && !hasOpts) {
       q.type = TYPE_FILL;
@@ -453,8 +548,12 @@
     }
 
     q._valid = true;
-    if (q.type === TYPE_SINGLE && (!q.options || q.options.length < 2)) q._valid = false;
-    if (q.type === TYPE_MULTIPLE && (!q.options || q.options.length < 2)) q._valid = false;
+    if (q.type === TYPE_SINGLE && !hasOpts && q.options.length < 2) {
+      q._valid = false;
+    }
+    if (q.type === TYPE_MULTIPLE && !hasOpts && q.options.length < 2) {
+      q._valid = false;
+    }
 
     return q;
   }

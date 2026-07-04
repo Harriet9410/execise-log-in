@@ -153,6 +153,115 @@ app.post('/api/progress/reset', auth, (req, res) => {
   res.json({ ok: true });
 });
 
+// ==================== 公共题库 ====================
+app.get('/api/public', auth, (req, res) => {
+  res.json(db.getPublicQuestions());
+});
+
+app.get('/api/public/:id', auth, (req, res) => {
+  const detail = db.getPublicQuestionDetail(req.params.id);
+  if (!detail) return res.status(404).json({ error: '题库不存在' });
+  res.json(detail);
+});
+
+app.post('/api/public', auth, adminOnly, (req, res) => {
+  const { questions, title } = req.body;
+  if (!Array.isArray(questions) || !questions.length) return res.status(400).json({ error: '请发送题目数组' });
+  const entry = db.publishPublicQuestions(req.userId, questions, title);
+  res.json(entry);
+});
+
+app.delete('/api/public/:id', auth, adminOnly, (req, res) => {
+  db.deletePublicQuestion(req.userId, req.params.id);
+  res.json({ ok: true });
+});
+
+// ==================== 分享题目 ====================
+app.post('/api/share', auth, (req, res) => {
+  const { toUserId, questions, message } = req.body;
+  if (!toUserId) return res.status(400).json({ error: '请选择接收用户' });
+  if (!Array.isArray(questions) || !questions.length) return res.status(400).json({ error: '请选择题目' });
+  const entry = db.shareQuestions(req.userId, toUserId, questions, message);
+  if (!entry) return res.status(400).json({ error: '分享失败' });
+  res.json(entry);
+});
+
+app.get('/api/shared', auth, (req, res) => {
+  res.json(db.getSharedWithMe(req.userId));
+});
+
+app.get('/api/shared/:id', auth, (req, res) => {
+  const detail = db.getSharedDetail(req.userId, req.params.id);
+  if (!detail) return res.status(404).json({ error: '分享不存在' });
+  res.json(detail);
+});
+
+app.post('/api/shared/:id/accept', auth, (req, res) => {
+  const ok = db.acceptShare(req.userId, req.params.id);
+  if (!ok) return res.status(400).json({ error: '操作失败' });
+  res.json({ ok: true });
+});
+
+// ==================== 消息 ====================
+app.get('/api/messages', auth, (req, res) => {
+  res.json(db.getMessages(req.userId));
+});
+
+app.post('/api/messages', auth, (req, res) => {
+  const { toUserId, content } = req.body;
+  if (!toUserId || !content || !content.trim()) return res.status(400).json({ error: '请输入内容' });
+  const entry = db.sendMessage(req.userId, toUserId, content.trim());
+  if (!entry) return res.status(400).json({ error: '发送失败' });
+  res.json(entry);
+});
+
+app.get('/api/messages/unread', auth, (req, res) => {
+  res.json({ count: db.getUnreadCount(req.userId) });
+});
+
+app.post('/api/messages/read', auth, (req, res) => {
+  db.markMessagesRead(req.userId);
+  res.json({ ok: true });
+});
+
+// ==================== 好友系统 ====================
+app.get('/api/friends', auth, (req, res) => {
+  res.json(db.getFriends(req.userId));
+});
+
+app.get('/api/friends/requests', auth, (req, res) => {
+  res.json(db.getFriendRequests(req.userId));
+});
+
+app.get('/api/friends/discover', auth, (req, res) => {
+  res.json(db.getNonFriendUsers(req.userId));
+});
+
+app.post('/api/friends/request', auth, (req, res) => {
+  const { toUserId } = req.body;
+  if (!toUserId) return res.status(400).json({ error: '请选择用户' });
+  const result = db.sendFriendRequest(req.userId, toUserId);
+  if (!result) return res.status(400).json({ error: '已发送过请求或无效用户' });
+  res.json(result);
+});
+
+app.post('/api/friends/accept/:id', auth, (req, res) => {
+  const ok = db.acceptFriendRequest(req.params.id, req.userId);
+  if (!ok) return res.status(400).json({ error: '操作失败' });
+  res.json({ ok: true });
+});
+
+app.post('/api/friends/reject/:id', auth, (req, res) => {
+  const ok = db.rejectFriendRequest(req.params.id, req.userId);
+  if (!ok) return res.status(400).json({ error: '操作失败' });
+  res.json({ ok: true });
+});
+
+app.delete('/api/friends/:id', auth, (req, res) => {
+  db.removeFriend(req.userId, parseInt(req.params.id));
+  res.json({ ok: true });
+});
+
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });

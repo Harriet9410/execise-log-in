@@ -590,6 +590,7 @@
     h += '<button class="btn" id="editSubjBtn">📚 编辑科目</button>';
     h += '<button class="btn btn-danger" id="deleteBtn">🗑️ 删除此题</button>';
     h += '<button class="btn btn-danger" id="batchDeleteBtn">🗑️ 批量删除</button>';
+    h += '<button class="btn" id="shareBtn">📤 分享</button>';
     h += '</div>';
 
     if (state.revealed && hasAnswer(q)) {
@@ -694,6 +695,8 @@
     };
     var batchDeleteBtn = document.getElementById('batchDeleteBtn');
     if (batchDeleteBtn) batchDeleteBtn.onclick = function() { openDeleteEditor(q.id); };
+    var shareBtn = document.getElementById('shareBtn');
+    if (shareBtn) shareBtn.onclick = function() { openShareEditor(q.id); };
   }
 
   function openCategoryEditor(q) {
@@ -1390,10 +1393,8 @@
     if (currentUser) {
       document.getElementById('userInfo').textContent = (isAdminUser ? '👑 ' : '👤 ') + currentUser.username;
     }
-    if (!isAdminUser) {
-      var usersBtn = document.getElementById('usersBtn');
-      if (usersBtn) usersBtn.style.display = 'none';
-    }
+    var usersBtn = document.getElementById('usersBtn');
+    if (isAdminUser && usersBtn) usersBtn.style.display = '';
 
     document.getElementById('logoutBtn').onclick = function() {
       if (confirm('确定退出登录？')) {
@@ -1404,8 +1405,12 @@
     };
 
     document.getElementById('usersBtn').onclick = function() { openUsersPanel(); };
+    document.getElementById('publicBtn').onclick = function() { openPublicSquare(); };
+    document.getElementById('messagesBtn').onclick = function() { openMessagesPanel(); };
+    document.getElementById('socialBtn').onclick = function() { openSocialPanel(); };
 
     loadAllData();
+    updateMsgBadge();
 
     document.getElementById('searchInput').oninput = function() { state.current=0; state.revealed=false; buildIndex(); render(); };
     document.getElementById('filterMode').onchange = function() { state.current=0; state.revealed=false; buildIndex(); render(); };
@@ -1486,4 +1491,634 @@
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
+
+  // ==================== 消息角标 ====================
+  function updateMsgBadge() {
+    api('GET', '/messages/unread').then(function(data) {
+      var btn = document.getElementById('messagesBtn');
+      var existing = btn.querySelector('.msg-badge');
+      if (existing) existing.remove();
+      if (data.count > 0) {
+        var badge = document.createElement('span');
+        badge.className = 'msg-badge';
+        badge.textContent = data.count;
+        badge.style.cssText = 'position:absolute;top:-4px;right:-4px;background:var(--red);color:#fff;font-size:10px;border-radius:50%;width:16px;height:16px;display:flex;align-items:center;justify-content:center;font-weight:700';
+        btn.style.position = 'relative';
+        btn.appendChild(badge);
+      }
+    }).catch(function(){});
+    setTimeout(updateMsgBadge, 30000);
+  }
+
+  // ==================== 公共题库广场 ====================
+  function openPublicSquare() {
+    closePanel('publicPanel');
+    var div = document.createElement('div');
+    div.id = 'publicPanel';
+    div.className = 'import-section';
+    div.style.maxWidth = '800px';
+    div.style.marginTop = '12px';
+
+    var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
+    html += '<h3 style="margin:0;font-size:16px">🌐 公共题库广场</h3>';
+    html += '<div><button class="btn" id="closePublicBtn">关闭</button></div>';
+    html += '</div>';
+
+    if (isAdminUser) {
+      html += '<div class="cat-editor" style="margin-bottom:12px">';
+      html += '<h4 style="font-size:14px;margin-bottom:8px">📢 发布公共题库</h4>';
+      html += '<div class="cat-editor-row"><span>标题：</span><input type="text" id="pubTitle" placeholder="如：期末复习题集"></div>';
+      html += '<div style="margin-bottom:8px;font-size:13px;color:var(--text2)">选择题库中的题目发布到广场：</div>';
+      html += '<div style="margin-bottom:6px"><label style="cursor:pointer;font-size:13px"><input type="checkbox" id="pubSelectAll"> 全选</label></div>';
+      html += '<div class="subj-batch-list" id="pubQList" style="max-height:200px">';
+      for (var i = 0; i < state.questions.length; i++) {
+        var q = state.questions[i];
+        html += '<label class="subj-batch-item" style="display:flex;align-items:center;gap:6px;padding:4px 8px;font-size:13px;cursor:pointer">';
+        html += '<input type="checkbox" class="pub-check" data-idx="' + i + '">';
+        html += '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(q.question.substring(0, 50)) + '</span>';
+        html += '<span style="font-size:11px;color:var(--text2)">[' + escapeHtml(q.subject || '未分') + ']</span>';
+        html += '</label>';
+      }
+      html += '</div>';
+      html += '<button class="btn btn-primary" id="pubSubmitBtn" style="margin-top:8px">📢 发布到广场</button>';
+      html += '</div>';
+    }
+
+    html += '<div id="pubListArea"><div style="text-align:center;color:var(--text2);padding:20px">加载中...</div></div>';
+    div.innerHTML = html;
+    document.querySelector('.content').appendChild(div);
+
+    document.getElementById('closePublicBtn').onclick = function() { div.remove(); };
+
+    if (isAdminUser) {
+      document.getElementById('pubSelectAll').onchange = function() {
+        var checks = div.querySelectorAll('.pub-check');
+        for (var i = 0; i < checks.length; i++) checks[i].checked = this.checked;
+      };
+      document.getElementById('pubSubmitBtn').onclick = function() {
+        var title = document.getElementById('pubTitle').value.trim();
+        var checks = div.querySelectorAll('.pub-check');
+        var qs = [];
+        for (var i = 0; i < checks.length; i++) {
+          if (checks[i].checked) {
+            var idx = parseInt(checks[i].getAttribute('data-idx'));
+            var q = state.questions[idx];
+            qs.push({ id: 'pub_' + q.id + '_' + Date.now(), type: q.type, question: q.question, options: q.options, answer: q.answer, subject: q.subject, category: q.category, difficulty: q.difficulty, explanation: q.explanation });
+          }
+        }
+        if (!qs.length) { alert('请选择题目'); return; }
+        api('POST', '/public', { questions: qs, title: title }).then(function() {
+          showToast('已发布 ' + qs.length + ' 道题到公共广场', 'success');
+          loadPublicList();
+        });
+      };
+    }
+
+    loadPublicList();
+  }
+
+  function loadPublicList() {
+    api('GET', '/public').then(function(list) {
+      var area = document.getElementById('pubListArea');
+      if (!area) return;
+      if (!list.length) {
+        area.innerHTML = '<div style="text-align:center;color:var(--text2);padding:20px">暂无公共题库</div>';
+        return;
+      }
+      var html = '';
+      for (var i = 0; i < list.length; i++) {
+        var p = list[i];
+        html += '<div class="q-card" style="margin-bottom:10px;padding:16px;cursor:pointer" data-pubid="' + escapeAttr(p.id) + '">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center">';
+        html += '<div>';
+        html += '<div style="font-weight:600;font-size:15px">📚 ' + escapeHtml(p.title) + '</div>';
+        html += '<div style="font-size:12px;color:var(--text2);margin-top:4px">发布者：' + escapeHtml(p.publisher) + ' · ' + p.questionCount + ' 题 · ' + escapeHtml(p.created_at) + '</div>';
+        html += '</div>';
+        html += '<button class="btn btn-primary view-pub-btn" data-pubid="' + escapeAttr(p.id) + '">查看题库</button>';
+        html += '</div>';
+        html += '</div>';
+      }
+      if (isAdminUser) {
+        for (var i = 0; i < list.length; i++) {
+          html = html.replace('data-pubid="' + escapeAttr(list[i].id) + '">', 'data-pubid="' + escapeAttr(list[i].id) + '" data-candelete="1" ');
+        }
+      }
+      area.innerHTML = html;
+
+      var viewBtns = area.querySelectorAll('.view-pub-btn');
+      for (var i = 0; i < viewBtns.length; i++) {
+        viewBtns[i].onclick = function(e) { e.stopPropagation(); viewPublicDetail(this.getAttribute('data-pubid')); };
+      }
+    });
+  }
+
+  function viewPublicDetail(pubId) {
+    api('GET', '/public/' + pubId).then(function(detail) {
+      var existing = document.getElementById('pubDetail');
+      if (existing) existing.remove();
+      var div = document.createElement('div');
+      div.id = 'pubDetail';
+      div.className = 'cat-editor';
+
+      var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
+      html += '<h4 style="margin:0">📚 ' + escapeHtml(detail.title) + '（' + detail.questions.length + ' 题）</h4>';
+      html += '<div><button class="btn btn-primary" id="importPubBtn">📥 导入到我的题库</button>';
+      if (isAdminUser) html += ' <button class="btn btn-danger" id="delPubBtn">🗑️ 删除</button>';
+      html += ' <button class="btn" id="closePubDetailBtn">关闭</button></div></div>';
+
+      html += '<div class="subj-batch-list" style="max-height:400px">';
+      for (var i = 0; i < detail.questions.length; i++) {
+        var q = detail.questions[i];
+        html += '<div style="padding:8px;border-bottom:1px solid var(--border);font-size:13px">';
+        html += '<div style="font-weight:600">' + (i+1) + '. ' + escapeHtml(q.question.substring(0, 80)) + '</div>';
+        html += '<div style="font-size:11px;color:var(--text2);margin-top:2px"><span style="background:var(--accent-light);color:var(--accent);padding:1px 6px;border-radius:4px">' + (typeNames[q.type]||q.type) + '</span> ' + escapeHtml(q.subject||'') + ' / ' + escapeHtml(q.category||'') + '</div>';
+        html += '</div>';
+      }
+      html += '</div>';
+
+      div.innerHTML = html;
+      document.querySelector('.content').appendChild(div);
+
+      document.getElementById('closePubDetailBtn').onclick = function() { div.remove(); };
+      document.getElementById('importPubBtn').onclick = function() {
+        var qs = detail.questions.map(function(q) {
+          return { id: 'pubimp_' + Date.now() + '_' + Math.random().toString(36).substr(2,6), type: q.type, question: q.question, options: q.options || [], answer: q.answer, subject: q.subject || '', category: q.category || '', difficulty: q.difficulty || 1, explanation: q.explanation || '' };
+        });
+        api('POST', '/questions', qs).then(function() {
+          loadAllData().then(function() { showToast('已导入 ' + qs.length + ' 道题', 'success'); div.remove(); });
+        });
+      };
+      if (isAdminUser) {
+        document.getElementById('delPubBtn').onclick = function() {
+          if (!confirm('确定删除此公共题库？')) return;
+          api('DELETE', '/public/' + pubId).then(function() {
+            showToast('已删除', 'success'); div.remove(); loadPublicList();
+          });
+        };
+      }
+    });
+  }
+
+  // ==================== 消息面板 ====================
+  function openMessagesPanel() {
+    closePanel('msgPanel');
+    var div = document.createElement('div');
+    div.id = 'msgPanel';
+    div.className = 'import-section';
+    div.style.maxWidth = '800px';
+    div.style.marginTop = '12px';
+
+    var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
+    html += '<h3 style="margin:0;font-size:16px">💬 消息中心</h3>';
+    html += '<button class="btn" id="closeMsgBtn">关闭</button></div>';
+
+    html += '<div style="display:flex;gap:8px;margin-bottom:12px">';
+    html += '<select id="msgToUser" class="select" style="flex:1"></select>';
+    html += '<input type="text" id="msgContent" class="search" placeholder="输入消息..." style="flex:2">';
+    html += '<button class="btn btn-primary" id="sendMsgBtn">发送</button>';
+    html += '</div>';
+
+    html += '<div id="msgListArea" style="max-height:400px;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>';
+
+    div.innerHTML = html;
+    document.querySelector('.content').appendChild(div);
+
+    document.getElementById('closeMsgBtn').onclick = function() { div.remove(); };
+
+    api('GET', '/users').then(function(users) {
+      var sel = document.getElementById('msgToUser');
+      for (var i = 0; i < users.length; i++) {
+        if (users[i].id === currentUser.id) continue;
+        var o = document.createElement('option');
+        o.value = users[i].id; o.textContent = users[i].username;
+        sel.appendChild(o);
+      }
+    });
+
+    document.getElementById('sendMsgBtn').onclick = function() {
+      var toId = parseInt(document.getElementById('msgToUser').value);
+      var content = document.getElementById('msgContent').value.trim();
+      if (!toId) { alert('请选择接收用户'); return; }
+      if (!content) { alert('请输入消息'); return; }
+      api('POST', '/messages', { toUserId: toId, content: content }).then(function() {
+        document.getElementById('msgContent').value = '';
+        loadMsgList();
+        showToast('已发送', 'success');
+      });
+    };
+
+    api('POST', '/messages/read').then(function() {
+      var btn = document.getElementById('messagesBtn');
+      var badge = btn.querySelector('.msg-badge');
+      if (badge) badge.remove();
+    });
+
+    loadMsgList();
+  }
+
+  function loadMsgList() {
+    api('GET', '/messages').then(function(messages) {
+      var area = document.getElementById('msgListArea');
+      if (!area) return;
+      if (!messages.length) {
+        area.innerHTML = '<div style="text-align:center;color:var(--text2);padding:30px">暂无消息</div>';
+        return;
+      }
+      messages.reverse();
+      var html = '';
+      for (var i = 0; i < messages.length; i++) {
+        var m = messages[i];
+        var bg = m.isMine ? 'background:var(--accent-light)' : 'background:var(--card)';
+        var align = m.isMine ? 'margin-left:40px' : 'margin-right:40px';
+        var nameColor = m.isMine ? 'var(--accent)' : 'var(--green)';
+        html += '<div style="padding:10px 14px;border-bottom:1px solid var(--border);' + align + ';' + bg + ';border-radius:8px;margin-bottom:4px">';
+        html += '<div style="font-size:11px;color:' + nameColor + ';font-weight:600">' + (m.isMine ? '我' : escapeHtml(m.from_username)) + ' · ' + escapeHtml(m.created_at) + '</div>';
+        html += '<div style="font-size:14px;margin-top:4px;line-height:1.5">' + escapeHtml(m.content) + '</div>';
+        if (m.type === 'share') {
+          html += '<button class="btn view-share-btn" data-ref="' + escapeAttr(m.ref_id) + '" style="padding:2px 10px;font-size:12px;margin-top:6px">📋 查看分享</button>';
+        }
+        html += '</div>';
+      }
+      area.innerHTML = html;
+
+      var shareBtns = area.querySelectorAll('.view-share-btn');
+      for (var i = 0; i < shareBtns.length; i++) {
+        shareBtns[i].onclick = function() { viewShareDetail(this.getAttribute('data-ref')); };
+      }
+    });
+  }
+
+  // ==================== 分享题目 ====================
+  function openShareEditor(qid) {
+    var existing = document.getElementById('shareEditor');
+    if (existing) existing.remove();
+
+    var div = document.createElement('div');
+    div.id = 'shareEditor';
+    div.className = 'cat-editor';
+
+    var html = '<h4 style="font-size:14px;margin-bottom:8px">📤 分享题目</h4>';
+    html += '<div style="margin-bottom:8px"><label style="cursor:pointer;font-size:13px"><input type="checkbox" id="shareSelectAll"> 全选当前题库</label></div>';
+    html += '<div class="subj-batch-list" id="shareQList" style="max-height:200px">';
+    for (var i = 0; i < state.questions.length; i++) {
+      var q = state.questions[i];
+      var isCurrent = (q.id === qid);
+      html += '<label class="subj-batch-item" style="display:flex;align-items:center;gap:6px;padding:4px 8px;font-size:13px;cursor:pointer">';
+      html += '<input type="checkbox" class="share-check" data-idx="' + i + '"' + (isCurrent ? ' checked' : '') + '>';
+      html += '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(q.question.substring(0, 50)) + '</span>';
+      html += '</label>';
+    }
+    html += '</div>';
+    html += '<div class="cat-editor-row" style="margin-top:8px"><span>分享给：</span><select id="shareToUser" class="select"></select></div>';
+    html += '<div class="form-group" style="margin-top:6px"><label>附言（可选）：</label><input type="text" id="shareMsg" class="q-fill" placeholder="说点什么..."></div>';
+    html += '<div class="editor-actions"><button class="btn btn-primary" id="sendShareBtn">📤 分享</button><button class="btn" id="cancelShareBtn">取消</button></div>';
+
+    div.innerHTML = html;
+    document.querySelector('.q-card').appendChild(div);
+
+    document.getElementById('shareSelectAll').onchange = function() {
+      var checks = div.querySelectorAll('.share-check');
+      for (var i = 0; i < checks.length; i++) checks[i].checked = this.checked;
+    };
+
+    api('GET', '/users').then(function(users) {
+      var sel = document.getElementById('shareToUser');
+      for (var i = 0; i < users.length; i++) {
+        if (users[i].id === currentUser.id) continue;
+        var o = document.createElement('option');
+        o.value = users[i].id; o.textContent = users[i].username;
+        sel.appendChild(o);
+      }
+    });
+
+    document.getElementById('sendShareBtn').onclick = function() {
+      var toId = parseInt(document.getElementById('shareToUser').value);
+      if (!toId) { alert('请选择接收用户'); return; }
+      var checks = div.querySelectorAll('.share-check');
+      var qs = [];
+      for (var i = 0; i < checks.length; i++) {
+        if (checks[i].checked) {
+          var idx = parseInt(checks[i].getAttribute('data-idx'));
+          var q = state.questions[idx];
+          qs.push({ id: 'shr_' + q.id + '_' + Date.now(), type: q.type, question: q.question, options: q.options, answer: q.answer, subject: q.subject, category: q.category, difficulty: q.difficulty, explanation: q.explanation });
+        }
+      }
+      if (!qs.length) { alert('请选择题目'); return; }
+      var msg = document.getElementById('shareMsg').value.trim();
+      api('POST', '/share', { toUserId: toId, questions: qs, message: msg }).then(function() {
+        showToast('已分享 ' + qs.length + ' 道题', 'success');
+        div.remove();
+      });
+    };
+    document.getElementById('cancelShareBtn').onclick = function() { div.remove(); };
+  }
+
+  function viewShareDetail(shareId) {
+    api('GET', '/shared/' + shareId).then(function(detail) {
+      var existing = document.getElementById('shareDetail');
+      if (existing) existing.remove();
+      var div = document.createElement('div');
+      div.id = 'shareDetail';
+      div.className = 'cat-editor';
+
+      var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
+      html += '<h4 style="margin:0">📋 来自「' + escapeHtml(detail.from_username) + '」的分享（' + detail.questions.length + ' 题）</h4>';
+      html += '<div><button class="btn btn-primary" id="acceptShareBtn">📥 导入到我的题库</button>';
+      html += ' <button class="btn" id="closeShareDetailBtn">关闭</button></div></div>';
+
+      if (detail.message) html += '<div style="padding:8px 12px;background:var(--accent-light);border-radius:6px;font-size:13px;margin-bottom:10px">💬 ' + escapeHtml(detail.message) + '</div>';
+
+      html += '<div class="subj-batch-list" style="max-height:300px">';
+      for (var i = 0; i < detail.questions.length; i++) {
+        var q = detail.questions[i];
+        html += '<div style="padding:8px;border-bottom:1px solid var(--border);font-size:13px">';
+        html += '<div style="font-weight:600">' + (i+1) + '. ' + escapeHtml(q.question.substring(0, 80)) + '</div>';
+        html += '<div style="font-size:11px;color:var(--text2);margin-top:2px"><span style="background:var(--accent-light);color:var(--accent);padding:1px 6px;border-radius:4px">' + (typeNames[q.type]||q.type) + '</span> ' + escapeHtml(q.subject||'') + '</div>';
+        html += '</div>';
+      }
+      html += '</div>';
+
+      div.innerHTML = html;
+      document.querySelector('.content').appendChild(div);
+
+      document.getElementById('closeShareDetailBtn').onclick = function() { div.remove(); };
+      document.getElementById('acceptShareBtn').onclick = function() {
+        api('POST', '/shared/' + shareId + '/accept').then(function() {
+          loadAllData().then(function() { showToast('已导入到题库', 'success'); div.remove(); });
+        });
+      };
+    });
+  }
+
+  // ==================== 交友中心 ====================
+  function openSocialPanel() {
+    closePanel('socialPanel');
+    var div = document.createElement('div');
+    div.id = 'socialPanel';
+    div.className = 'import-section';
+    div.style.maxWidth = '800px';
+    div.style.marginTop = '12px';
+
+    var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
+    html += '<h3 style="margin:0;font-size:16px">🤝 交友中心</h3>';
+    html += '<button class="btn" id="closeSocialBtn">关闭</button></div>';
+
+    html += '<div style="display:flex;gap:8px;margin-bottom:16px">';
+    html += '<button class="btn btn-primary" id="socialFriendsTab">我的好友</button>';
+    html += '<button class="btn" id="socialRequestsTab">好友请求</button>';
+    html += '<button class="btn" id="socialDiscoverTab">发现用户</button>';
+    html += '</div>';
+
+    html += '<div id="socialContent"></div>';
+    div.innerHTML = html;
+    document.querySelector('.content').appendChild(div);
+
+    document.getElementById('closeSocialBtn').onclick = function() { div.remove(); };
+
+    document.getElementById('socialFriendsTab').onclick = function() {
+      setActiveTab('socialFriendsTab');
+      loadFriendsList();
+    };
+    document.getElementById('socialRequestsTab').onclick = function() {
+      setActiveTab('socialRequestsTab');
+      loadFriendRequests();
+    };
+    document.getElementById('socialDiscoverTab').onclick = function() {
+      setActiveTab('socialDiscoverTab');
+      loadDiscoverUsers();
+    };
+
+    function setActiveTab(activeId) {
+      ['socialFriendsTab', 'socialRequestsTab', 'socialDiscoverTab'].forEach(function(id) {
+        var btn = document.getElementById(id);
+        if (id === activeId) btn.className = 'btn btn-primary';
+        else btn.className = 'btn';
+      });
+    }
+
+    loadFriendsList();
+
+    function loadFriendsList() {
+      api('GET', '/friends').then(function(friends) {
+        var content = document.getElementById('socialContent');
+        if (!friends.length) {
+          content.innerHTML = '<div style="text-align:center;color:var(--text2);padding:30px">暂无好友，去"发现用户"添加好友吧！</div>';
+          return;
+        }
+        var html = '<div style="font-size:13px;color:var(--text2);margin-bottom:8px">共 ' + friends.length + ' 位好友</div>';
+        for (var i = 0; i < friends.length; i++) {
+          var f = friends[i];
+          html += '<div class="q-card" style="padding:14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">';
+          html += '<div>';
+          html += '<div style="font-weight:600;font-size:15px">👤 ' + escapeHtml(f.username) + '</div>';
+          html += '<div style="font-size:12px;color:var(--text2)">成为好友时间：' + escapeHtml(f.created_at) + '</div>';
+          html += '</div>';
+          html += '<div style="display:flex;gap:6px">';
+          html += '<button class="btn chat-friend-btn" data-uid="' + f.id + '" data-uname="' + escapeAttr(f.username) + '">💬 聊天</button>';
+          html += '<button class="btn share-friend-btn" data-uid="' + f.id + '" data-uname="' + escapeAttr(f.username) + '">📤 分享题目</button>';
+          html += '<button class="btn btn-danger remove-friend-btn" data-uid="' + f.id + '" data-uname="' + escapeAttr(f.username) + '">删除好友</button>';
+          html += '</div></div>';
+        }
+        content.innerHTML = html;
+
+        content.querySelectorAll('.chat-friend-btn').forEach(function(btn) {
+          btn.onclick = function() { openChatWith(this.getAttribute('data-uid'), this.getAttribute('data-uname')); };
+        });
+        content.querySelectorAll('.share-friend-btn').forEach(function(btn) {
+          btn.onclick = function() { openShareToFriend(this.getAttribute('data-uid'), this.getAttribute('data-uname')); };
+        });
+        content.querySelectorAll('.remove-friend-btn').forEach(function(btn) {
+          btn.onclick = function() {
+            var uid = parseInt(this.getAttribute('data-uid'));
+            var uname = this.getAttribute('data-uname');
+            if (!confirm('确定删除好友「' + uname + '」？')) return;
+            api('DELETE', '/friends/' + uid).then(function() { loadFriendsList(); showToast('已删除好友', 'success'); });
+          };
+        });
+      });
+    }
+
+    function loadFriendRequests() {
+      api('GET', '/friends/requests').then(function(requests) {
+        var content = document.getElementById('socialContent');
+        if (!requests.length) {
+          content.innerHTML = '<div style="text-align:center;color:var(--text2);padding:30px">暂无好友请求</div>';
+          return;
+        }
+        var html = '';
+        for (var i = 0; i < requests.length; i++) {
+          var r = requests[i];
+          html += '<div class="q-card" style="padding:14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">';
+          html += '<div>';
+          html += '<div style="font-weight:600;font-size:15px">👤 ' + escapeHtml(r.from_username) + '</div>';
+          html += '<div style="font-size:12px;color:var(--text2)">请求时间：' + escapeHtml(r.created_at) + '</div>';
+          html += '</div>';
+          html += '<div style="display:flex;gap:6px">';
+          html += '<button class="btn btn-primary accept-fr-btn" data-frid="' + escapeAttr(r.id) + '">✅ 接受</button>';
+          html += '<button class="btn btn-danger reject-fr-btn" data-frid="' + escapeAttr(r.id) + '">❌ 拒绝</button>';
+          html += '</div></div>';
+        }
+        content.innerHTML = html;
+
+        content.querySelectorAll('.accept-fr-btn').forEach(function(btn) {
+          btn.onclick = function() {
+            api('POST', '/friends/accept/' + this.getAttribute('data-frid')).then(function() {
+              showToast('已接受好友请求', 'success'); loadFriendRequests();
+            });
+          };
+        });
+        content.querySelectorAll('.reject-fr-btn').forEach(function(btn) {
+          btn.onclick = function() {
+            api('POST', '/friends/reject/' + this.getAttribute('data-frid')).then(function() { loadFriendRequests(); });
+          };
+        });
+      });
+    }
+
+    function loadDiscoverUsers() {
+      api('GET', '/friends/discover').then(function(users) {
+        var content = document.getElementById('socialContent');
+        if (!users.length) {
+          content.innerHTML = '<div style="text-align:center;color:var(--text2);padding:30px">没有更多用户可以添加了</div>';
+          return;
+        }
+        var html = '<div style="font-size:13px;color:var(--text2);margin-bottom:8px">以下用户可以添加为好友</div>';
+        for (var i = 0; i < users.length; i++) {
+          var u = users[i];
+          html += '<div class="q-card" style="padding:14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">';
+          html += '<div>';
+          html += '<div style="font-weight:600;font-size:15px">👤 ' + escapeHtml(u.username) + '</div>';
+          html += '<div style="font-size:12px;color:var(--text2)">注册时间：' + escapeHtml(u.created_at || '-') + '</div>';
+          html += '</div>';
+          html += '<button class="btn btn-primary add-friend-btn" data-uid="' + u.id + '">➕ 加好友</button>';
+          html += '</div>';
+        }
+        content.innerHTML = html;
+
+        content.querySelectorAll('.add-friend-btn').forEach(function(btn) {
+          btn.onclick = function() {
+            var uid = parseInt(this.getAttribute('data-uid'));
+            api('POST', '/friends/request', { toUserId: uid }).then(function() {
+              showToast('好友请求已发送', 'success'); loadDiscoverUsers();
+            }).catch(function(e) { showToast('发送失败，可能已请求过', 'error'); });
+          };
+        });
+      });
+    }
+  }
+
+  function openChatWith(userId, username) {
+    closePanel('chatPanel');
+    var div = document.createElement('div');
+    div.id = 'chatPanel';
+    div.className = 'import-section';
+    div.style.maxWidth = '800px';
+    div.style.marginTop = '12px';
+
+    var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
+    html += '<h3 style="margin:0;font-size:16px">💬 与 ' + escapeHtml(username) + ' 的对话</h3>';
+    html += '<button class="btn" id="closeChatBtn">关闭</button></div>';
+    html += '<div id="chatMessages" style="max-height:400px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px"></div>';
+    html += '<div style="display:flex;gap:8px"><input type="text" id="chatInput" class="search" placeholder="输入消息..." style="flex:1"><button class="btn btn-primary" id="chatSendBtn">发送</button></div>';
+
+    div.innerHTML = html;
+    document.querySelector('.content').appendChild(div);
+
+    document.getElementById('closeChatBtn').onclick = function() { div.remove(); };
+
+    function loadChat() {
+      api('GET', '/messages').then(function(msgs) {
+        var chatMsgs = msgs.filter(function(m) {
+          return (m.from_user_id === currentUser.id && m.to_user_id === parseInt(userId)) ||
+                 (m.from_user_id === parseInt(userId) && m.to_user_id === currentUser.id);
+        });
+        chatMsgs.reverse();
+        var area = document.getElementById('chatMessages');
+        var h = '';
+        for (var i = 0; i < chatMsgs.length; i++) {
+          var m = chatMsgs[i];
+          if (m.isMine) {
+            h += '<div style="margin-left:40px;background:var(--accent-light);padding:8px 12px;border-radius:8px;margin-bottom:4px">';
+            h += '<div style="font-size:11px;color:var(--accent)">我 · ' + escapeHtml(m.created_at) + '</div>';
+          } else {
+            h += '<div style="margin-right:40px;background:var(--card);border:1px solid var(--border);padding:8px 12px;border-radius:8px;margin-bottom:4px">';
+            h += '<div style="font-size:11px;color:var(--green)">' + escapeHtml(username) + ' · ' + escapeHtml(m.created_at) + '</div>';
+          }
+          h += '<div style="font-size:14px;margin-top:4px">' + escapeHtml(m.content) + '</div>';
+          h += '</div>';
+        }
+        area.innerHTML = h || '<div style="text-align:center;color:var(--text2);padding:20px">暂无消息</div>';
+        area.scrollTop = area.scrollHeight;
+      });
+    }
+
+    loadChat();
+
+    document.getElementById('chatSendBtn').onclick = function() { sendChatMsg(); };
+    document.getElementById('chatInput').onkeydown = function(e) { if (e.key === 'Enter') { e.preventDefault(); sendChatMsg(); } };
+
+    function sendChatMsg() {
+      var input = document.getElementById('chatInput');
+      var content = input.value.trim();
+      if (!content) return;
+      api('POST', '/messages', { toUserId: parseInt(userId), content: content }).then(function() {
+        input.value = '';
+        loadChat();
+      });
+    }
+  }
+
+  function openShareToFriend(userId, username) {
+    var existing = document.getElementById('shareFriendEditor');
+    if (existing) existing.remove();
+    var div = document.createElement('div');
+    div.id = 'shareFriendEditor';
+    div.className = 'cat-editor';
+
+    var html = '<h4 style="font-size:14px;margin-bottom:8px">📤 分享题目给 ' + escapeHtml(username) + '</h4>';
+    html += '<div style="margin-bottom:8px"><label style="cursor:pointer;font-size:13px"><input type="checkbox" id="sfSelectAll"> 全选</label></div>';
+    html += '<div class="subj-batch-list" style="max-height:200px">';
+    for (var i = 0; i < state.questions.length; i++) {
+      var q = state.questions[i];
+      html += '<label class="subj-batch-item" style="display:flex;align-items:center;gap:6px;padding:4px 8px;font-size:13px;cursor:pointer">';
+      html += '<input type="checkbox" class="sf-check" data-idx="' + i + '">';
+      html += '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(q.question.substring(0, 50)) + '</span>';
+      html += '</label>';
+    }
+    html += '</div>';
+    html += '<div class="form-group" style="margin-top:6px"><label>附言（可选）：</label><input type="text" id="sfMsg" class="q-fill" placeholder="说点什么..."></div>';
+    html += '<div class="editor-actions"><button class="btn btn-primary" id="sfSubmitBtn">📤 分享</button><button class="btn" id="sfCancelBtn">取消</button></div>';
+
+    div.innerHTML = html;
+    document.querySelector('.content').appendChild(div);
+
+    document.getElementById('sfSelectAll').onchange = function() {
+      var checks = div.querySelectorAll('.sf-check');
+      for (var i = 0; i < checks.length; i++) checks[i].checked = this.checked;
+    };
+
+    document.getElementById('sfSubmitBtn').onclick = function() {
+      var checks = div.querySelectorAll('.sf-check');
+      var qs = [];
+      for (var i = 0; i < checks.length; i++) {
+        if (checks[i].checked) {
+          var idx = parseInt(checks[i].getAttribute('data-idx'));
+          var q = state.questions[idx];
+          qs.push({ id: 'shr_' + q.id + '_' + Date.now(), type: q.type, question: q.question, options: q.options, answer: q.answer, subject: q.subject, category: q.category, difficulty: q.difficulty, explanation: q.explanation });
+        }
+      }
+      if (!qs.length) { alert('请选择题目'); return; }
+      var msg = document.getElementById('sfMsg').value.trim();
+      api('POST', '/share', { toUserId: parseInt(userId), questions: qs, message: msg }).then(function() {
+        showToast('已分享 ' + qs.length + ' 道题给 ' + username, 'success');
+        div.remove();
+      });
+    };
+    document.getElementById('sfCancelBtn').onclick = function() { div.remove(); };
+  }
+
+  function closePanel(id) {
+    var existing = document.getElementById(id);
+    if (existing) existing.remove();
+  }
 })();

@@ -182,5 +182,10 @@ kbd{background:var(--bg);border:1px solid var(--border);border-radius:4px;paddin
 .btn-login:hover{opacity:0.9;}
 .form-error{color:var(--red);font-size:13px;min-height:18px;margin-bottom:8px;}
 
+.msg-badge{position:absolute;top:-4px;right:-4px;background:var(--red);color:#fff;font-size:10px;border-radius:50%;width:16px;height:16px;display:flex;align-items:center;justify-content:center;font-weight:700;}
+
+.msg-bubble-me{margin-left:40px;background:var(--accent-light);padding:10px 14px;border-radius:8px;margin-bottom:4px;}
+.msg-bubble-other{margin-right:40px;background:var(--card);padding:10px 14px;border-radius:8px;margin-bottom:4px;border:1px solid var(--border);}
+
 .loading-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.3);display:flex;justify-content:center;align-items:center;z-index:9998;}
 .loading-spinner{background:var(--card);padding:24px 32px;border-radius:12px;font-size:14px;color:var(--text);box-shadow:var(--shadow);}

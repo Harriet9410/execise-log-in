@@ -7,7 +7,7 @@ const DB_FILE = path.join(__dirname, 'data.json');
 const ADMIN_USERNAME = 'admin';
 const ADMIN_PASSWORD = 'admin123';
 
-let db = { users: [], questions: [], progress: [], nextUserId: 1 };
+let db = { users: [], questions: [], progress: [], public_questions: [], shares: [], messages: [], friends: [], nextUserId: 1 };
 
 function load() {
   try {
@@ -160,8 +160,251 @@ function resetUserPassword(userId, newPassword) {
   return true;
 }
 
+function publishPublicQuestions(userId, questions, title) {
+  if (!isAdmin(userId)) return null;
+  const entry = {
+    id: 'pub_' + Date.now(),
+    user_id: userId,
+    title: title || '公共题库',
+    questions: questions,
+    created_at: new Date().toLocaleString()
+  };
+  db.public_questions.push(entry);
+  save();
+  return entry;
+}
+
+function getPublicQuestions() {
+  return db.public_questions.map(p => ({
+    id: p.id, title: p.title, questionCount: p.questions.length,
+    created_at: p.created_at,
+    publisher: (db.users.find(u => u.id === p.user_id) || {}).username || 'admin'
+  }));
+}
+
+function getPublicQuestionDetail(id) {
+  const p = db.public_questions.find(x => x.id === id);
+  if (!p) return null;
+  return { id: p.id, title: p.title, questions: p.questions, created_at: p.created_at,
+    publisher: (db.users.find(u => u.id === p.user_id) || {}).username || 'admin' };
+}
+
+function deletePublicQuestion(userId, id) {
+  if (!isAdmin(userId)) return false;
+  db.public_questions = db.public_questions.filter(p => p.id !== id);
+  save();
+  return true;
+}
+
+function shareQuestions(fromUserId, toUserId, questions, message) {
+  const fromUser = db.users.find(u => u.id === fromUserId);
+  if (!fromUser) return null;
+  const toUser = db.users.find(u => u.id === toUserId);
+  if (!toUser) return null;
+  const entry = {
+    id: 'share_' + Date.now(),
+    from_user_id: fromUserId,
+    from_username: fromUser.username,
+    to_user_id: toUserId,
+    questions: questions,
+    message: message || '',
+    created_at: new Date().toLocaleString(),
+    read: false
+  };
+  db.shares.push(entry);
+  db.messages.push({
+    id: 'msg_' + Date.now(),
+    from_user_id: fromUserId,
+    from_username: fromUser.username,
+    to_user_id: toUserId,
+    type: 'share',
+    content: fromUser.username + ' 向你分享了 ' + questions.length + ' 道题目',
+    ref_id: entry.id,
+    created_at: new Date().toLocaleString(),
+    read: false
+  });
+  save();
+  return entry;
+}
+
+function getSharedWithMe(userId) {
+  return db.shares.filter(s => s.to_user_id === userId).map(s => ({
+    id: s.id, from_username: s.from_username, questionCount: s.questions.length,
+    message: s.message, created_at: s.created_at, read: s.read
+  }));
+}
+
+function getSharedDetail(userId, shareId) {
+  const s = db.shares.find(x => x.id === shareId && x.to_user_id === userId);
+  if (!s) return null;
+  s.read = true;
+  save();
+  return { id: s.id, from_username: s.from_username, questions: s.questions,
+    message: s.message, created_at: s.created_at };
+}
+
+function acceptShare(userId, shareId) {
+  const s = db.shares.find(x => x.id === shareId && x.to_user_id === userId);
+  if (!s) return false;
+  addQuestions(userId, s.questions);
+  return true;
+}
+
+function sendMessage(fromUserId, toUserId, content) {
+  const fromUser = db.users.find(u => u.id === fromUserId);
+  if (!fromUser) return null;
+  const entry = {
+    id: 'msg_' + Date.now(),
+    from_user_id: fromUserId,
+    from_username: fromUser.username,
+    to_user_id: toUserId,
+    type: 'text',
+    content: content,
+    ref_id: null,
+    created_at: new Date().toLocaleString(),
+    read: false
+  };
+  db.messages.push(entry);
+  save();
+  return entry;
+}
+
+function getMessages(userId) {
+  return db.messages.filter(m => m.to_user_id === userId || m.from_user_id === userId)
+    .map(m => ({
+      id: m.id, from_user_id: m.from_user_id, from_username: m.from_username,
+      to_user_id: m.to_user_id, type: m.type, content: m.content,
+      ref_id: m.ref_id, created_at: m.created_at, read: m.read,
+      isMine: m.from_user_id === userId
+    }));
+}
+
+function getUnreadCount(userId) {
+  return db.messages.filter(m => m.to_user_id === userId && !m.read).length;
+}
+
+function markMessagesRead(userId) {
+  for (const m of db.messages) {
+    if (m.to_user_id === userId) m.read = true;
+  }
+  save();
+}
+
+function sendFriendRequest(fromUserId, toUserId) {
+  if (fromUserId === toUserId) return null;
+  const existing = db.friends.find(f =>
+    (f.from_user_id === fromUserId && f.to_user_id === toUserId) ||
+    (f.from_user_id === toUserId && f.to_user_id === fromUserId)
+  );
+  if (existing) return null;
+  const fromUser = db.users.find(u => u.id === fromUserId);
+  if (!fromUser) return null;
+  const entry = {
+    id: 'fr_' + Date.now(),
+    from_user_id: fromUserId,
+    from_username: fromUser.username,
+    to_user_id: toUserId,
+    status: 'pending',
+    created_at: new Date().toLocaleString()
+  };
+  db.friends.push(entry);
+  db.messages.push({
+    id: 'msg_' + Date.now(),
+    from_user_id: fromUserId,
+    from_username: fromUser.username,
+    to_user_id: toUserId,
+    type: 'friend_request',
+    content: fromUser.username + ' 请求添加你为好友',
+    ref_id: entry.id,
+    created_at: new Date().toLocaleString(),
+    read: false
+  });
+  save();
+  return entry;
+}
+
+function acceptFriendRequest(requestId, userId) {
+  const fr = db.friends.find(f => f.id === requestId && f.to_user_id === userId && f.status === 'pending');
+  if (!fr) return false;
+  fr.status = 'accepted';
+  const fromUser = db.users.find(u => u.id === fr.from_user_id);
+  db.messages.push({
+    id: 'msg_' + Date.now(),
+    from_user_id: userId,
+    from_username: (db.users.find(u => u.id === userId) || {}).username,
+    to_user_id: fr.from_user_id,
+    type: 'friend_accepted',
+    content: (db.users.find(u => u.id === userId) || {}).username + ' 接受了你的好友请求',
+    ref_id: null,
+    created_at: new Date().toLocaleString(),
+    read: false
+  });
+  save();
+  return true;
+}
+
+function rejectFriendRequest(requestId, userId) {
+  const fr = db.friends.find(f => f.id === requestId && f.to_user_id === userId);
+  if (!fr) return false;
+  fr.status = 'rejected';
+  save();
+  return true;
+}
+
+function getFriends(userId) {
+  return db.friends.filter(f =>
+    (f.from_user_id === userId || f.to_user_id === userId) && f.status === 'accepted'
+  ).map(f => {
+    var friendId = f.from_user_id === userId ? f.to_user_id : f.from_user_id;
+    var friend = db.users.find(u => u.id === friendId);
+    return { id: friend.id, username: friend.username, created_at: f.created_at };
+  });
+}
+
+function getFriendRequests(userId) {
+  return db.friends.filter(f => f.to_user_id === userId && f.status === 'pending').map(f => ({
+    id: f.id, from_user_id: f.from_user_id, from_username: f.from_username, created_at: f.created_at
+  }));
+}
+
+function areFriends(userId1, userId2) {
+  return db.friends.some(f =>
+    ((f.from_user_id === userId1 && f.to_user_id === userId2) ||
+     (f.from_user_id === userId2 && f.to_user_id === userId1)) && f.status === 'accepted'
+  );
+}
+
+function removeFriend(userId, friendId) {
+  db.friends = db.friends.filter(f =>
+    !((f.from_user_id === userId && f.to_user_id === friendId) ||
+      (f.from_user_id === friendId && f.to_user_id === userId))
+  );
+  save();
+}
+
+function getNonFriendUsers(userId) {
+  var friendIds = new Set();
+  friendIds.add(userId);
+  for (var f of db.friends) {
+    if (f.from_user_id === userId || f.to_user_id === userId) {
+      if (f.status === 'accepted' || f.status === 'pending') {
+        friendIds.add(f.from_user_id);
+        friendIds.add(f.to_user_id);
+      }
+    }
+  }
+  return db.users.filter(u => !friendIds.has(u.id)).map(u => ({
+    id: u.id, username: u.username, created_at: u.created_at
+  }));
+}
+
 module.exports = {
   createUser, verifyUser, getUserById, isAdmin, getAllUsers, deleteUser, resetUserPassword,
   addQuestions, getQuestions, updateQuestion, deleteQuestions,
-  setProgress, removeProgress, getProgress, resetProgress
+  setProgress, removeProgress, getProgress, resetProgress,
+  publishPublicQuestions, getPublicQuestions, getPublicQuestionDetail, deletePublicQuestion,
+  shareQuestions, getSharedWithMe, getSharedDetail, acceptShare,
+  sendMessage, getMessages, getUnreadCount, markMessagesRead,
+  sendFriendRequest, acceptFriendRequest, rejectFriendRequest, getFriends,
+  getFriendRequests, areFriends, removeFriend, getNonFriendUsers
 };
